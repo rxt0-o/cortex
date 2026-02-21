@@ -1,0 +1,20 @@
+{
+  "name": "cortex",
+  "owner": {
+    "name": "rxt0-o",
+    "url": "https://github.com/rxt0-o"
+  },
+  "metadata": {
+    "description": "Persistent memory and autonomous intelligence for Claude Code",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "cortex",
+      "source": "./",
+      "description": "Persistent memory, autonomous background agents, and real-time architecture insights for Claude Code. Tracks sessions, maps your full-stack, explains files on open, and learns from every mistake.",
+      "category": "productivity",
+      "tags": ["memory", "sessions", "architecture", "daemon", "mcp", "context", "learning"]
+    }
+  ]
+}
