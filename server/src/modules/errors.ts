@@ -187,6 +187,32 @@ export function getErrorsForFiles(filePaths: string[]): CortexError[] {
   });
 }
 
+export interface UpdateErrorInput {
+  id: number;
+  fix_description?: string;
+  root_cause?: string;
+  fix_diff?: string;
+  prevention_rule?: string;
+  severity?: string;
+}
+
+export function updateError(input: UpdateErrorInput): CortexError | null {
+  const db = getDb();
+  const sets: string[] = [];
+  const values: SQLInputValue[] = [];
+
+  if (input.fix_description !== undefined) { sets.push('fix_description = ?'); values.push(input.fix_description); }
+  if (input.root_cause !== undefined) { sets.push('root_cause = ?'); values.push(input.root_cause); }
+  if (input.fix_diff !== undefined) { sets.push('fix_diff = ?'); values.push(input.fix_diff); }
+  if (input.prevention_rule !== undefined) { sets.push('prevention_rule = ?'); values.push(input.prevention_rule); }
+  if (input.severity !== undefined) { sets.push('severity = ?'); values.push(input.severity); }
+
+  if (sets.length === 0) return getError(input.id);
+  values.push(input.id);
+  db.prepare(`UPDATE errors SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  return getError(input.id);
+}
+
 export function getPreventionRules(): Array<{ id: number; prevention_rule: string; error_message: string }> {
   const db = getDb();
   return db.prepare(`

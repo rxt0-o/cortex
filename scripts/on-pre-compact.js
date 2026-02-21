@@ -18,6 +18,7 @@ async function main() {
 
     const filesModified = new Set();
     let toolCallCount = 0;
+    const userMessages = [];
 
     const rl = createInterface({ input: createReadStream(transcript_path, { encoding: 'utf-8' }), crlfDelay: Infinity });
     for await (const line of rl) {
@@ -32,14 +33,35 @@ async function main() {
             }
           }
         }
+        if (entry.type === 'human' && Array.isArray(entry.content)) {
+          for (const block of entry.content) {
+            if (block.type === 'text' && block.text && block.text.length > 20) {
+              if (!block.text.startsWith('-- Project Cortex') &&
+                  !block.text.startsWith('Cortex') &&
+                  !block.text.includes('hookSpecificOutput') &&
+                  !block.text.includes('SessionStart hook')) {
+                userMessages.push(block.text.slice(0, 200));
+              }
+            }
+          }
+        }
       } catch { /* skip */ }
     }
 
     const fileList = [...filesModified];
     const existing = db.prepare('SELECT summary FROM sessions WHERE id = ?').get(session_id);
     if (!existing?.summary) {
-      db.prepare('UPDATE sessions SET summary = ? WHERE id = ?').run(
-        `[Interim] ${toolCallCount} tools, ${fileList.length} files: ${fileList.slice(0, 5).join(', ')}`, session_id);
+      let summary;
+      if (userMessages.length > 0) {
+        const lastRequest = userMessages[userMessages.length - 1].split('\n')[0].slice(0, 150);
+        const fileContext = fileList.length > 0
+          ? ` [${fileList.slice(0, 3).map(f => f.split('/').pop()).join(', ')}]`
+          : '';
+        summary = `[Interim] ${lastRequest}${fileContext}`;
+      } else {
+        summary = `[Interim] ${toolCallCount} tools, ${fileList.length} files: ${fileList.slice(0, 5).join(', ')}`;
+      }
+      db.prepare('UPDATE sessions SET summary = ? WHERE id = ?').run(summary, session_id);
     }
 
     const ts = new Date().toISOString();

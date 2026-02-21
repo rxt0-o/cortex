@@ -107,6 +107,40 @@ export function getAutoBlockLearnings(): Learning[] {
   return rows.map((row) => ({ ...row, auto_block: true })) as unknown as Learning[];
 }
 
+export interface UpdateLearningInput {
+  id: number;
+  anti_pattern?: string;
+  correct_pattern?: string;
+  detection_regex?: string | null;
+  context?: string;
+  severity?: string;
+  auto_block?: boolean;
+}
+
+export function updateLearning(input: UpdateLearningInput): Learning | null {
+  const db = getDb();
+  const sets: string[] = [];
+  const values: SQLInputValue[] = [];
+
+  if (input.anti_pattern !== undefined) { sets.push('anti_pattern = ?'); values.push(input.anti_pattern); }
+  if (input.correct_pattern !== undefined) { sets.push('correct_pattern = ?'); values.push(input.correct_pattern); }
+  if ('detection_regex' in input) { sets.push('detection_regex = ?'); values.push(input.detection_regex ?? null); }
+  if (input.context !== undefined) { sets.push('context = ?'); values.push(input.context); }
+  if (input.severity !== undefined) { sets.push('severity = ?'); values.push(input.severity); }
+  if (input.auto_block !== undefined) { sets.push('auto_block = ?'); values.push(input.auto_block ? 1 : 0); }
+
+  if (sets.length === 0) return getLearning(input.id);
+  values.push(input.id);
+  db.prepare(`UPDATE learnings SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  return getLearning(input.id);
+}
+
+export function deleteLearning(id: number): boolean {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM learnings WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
 export function incrementLearningOccurrence(id: number): void {
   const db = getDb();
   db.prepare('UPDATE learnings SET occurrences = occurrences + 1 WHERE id = ?').run(id);

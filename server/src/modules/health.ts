@@ -34,25 +34,25 @@ export function calculateHealth(): HealthMetrics {
   ).get() as { total: number | null }).total ?? 0;
 
   const hotZoneCount = (db.prepare(
-    'SELECT COUNT(*) as count FROM project_files WHERE change_count > 10'
+    'SELECT COUNT(*) as count FROM project_files WHERE change_count > 20'
   ).get() as { count: number }).count;
 
   const avgChange = (db.prepare(
     'SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0'
   ).get() as { avg: number | null }).avg ?? 0;
 
-  // Bugs in last 7 days
+  // Unfixte Bugs in den letzten 7 Tagen (behobene Fehler nicht bestrafen)
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const recentBugs = (db.prepare(
-    'SELECT COUNT(*) as count FROM errors WHERE last_seen > ?'
+    'SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL'
   ).get(weekAgo) as { count: number }).count;
 
-  // Files with descriptions vs total
+  // Files with known file_type vs total (proxy für "wie gut kennt Cortex das Projekt")
   const totalFiles = (db.prepare('SELECT COUNT(*) as count FROM project_files').get() as { count: number }).count;
-  const docFiles = (db.prepare(
-    'SELECT COUNT(*) as count FROM project_files WHERE description IS NOT NULL'
+  const typedFiles = (db.prepare(
+    'SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL'
   ).get() as { count: number }).count;
-  const docCoverage = totalFiles > 0 ? Math.round((docFiles / totalFiles) * 100) : 100;
+  const docCoverage = totalFiles > 0 ? Math.round((typedFiles / totalFiles) * 100) : 100;
 
   return {
     openErrors,

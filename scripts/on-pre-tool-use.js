@@ -69,6 +69,29 @@ function main() {
       } catch { /* invalid regex */ }
     }
 
+    // 4. SQL-Migration spezifische Checks
+    const isSqlFile = (tool_input.file_path || '').toLowerCase().endsWith('.sql');
+    if (isSqlFile) {
+      // Fehlende NOTIFY pgrst nach Schema-Änderungen (Gotcha #102)
+      const hasSchemaChange = /CREATE TABLE|ALTER TABLE|CREATE VIEW|DROP TABLE/i.test(content);
+      const hasNotify = /NOTIFY pgrst/i.test(content);
+      if (hasSchemaChange && !hasNotify) {
+        warnings.push({ type: 'sql-migration', severity: 'warning',
+          message: 'Schema change without NOTIFY pgrst — PostgREST wont reload schema. Gotcha #102' });
+      }
+      // Bare auth.uid() statt (select auth.uid()) (Gotcha #126)
+      // Lookbehind: auth.uid() das NICHT von "(select " vorangestellt wird
+      if (/auth\.uid\(\)/.test(content) && !/\(select auth\.uid\(\)\)/.test(content)) {
+        warnings.push({ type: 'sql-migration', severity: 'warning',
+          message: 'Bare auth.uid() in RLS — use (select auth.uid()) for performance. Gotcha #126' });
+      }
+      // FK auf auth.users statt profiles (Gotcha #127)
+      if (/REFERENCES\s+auth\.users/i.test(content)) {
+        warnings.push({ type: 'sql-migration', severity: 'warning',
+          message: 'FK references auth.users — should reference profiles(id). Gotcha #127' });
+      }
+    }
+
     if (warnings.length === 0) process.exit(0);
 
     if (shouldBlock) {
