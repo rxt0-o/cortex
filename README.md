@@ -40,6 +40,7 @@ If you prefer to set up Cortex manually:
 
 ```bash
 git clone https://github.com/rxt0-o/cortex.git
+No build step needed — server/dist/ and daemon/dist/ are pre-built and included in the repo.
 ```
 
 Add to `.claude/settings.local.json`:

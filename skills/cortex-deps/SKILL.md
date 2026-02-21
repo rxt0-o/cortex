@@ -17,7 +17,7 @@ Show what a file imports, what imports it, and full impact analysis.
    - **Importers**: What files use this file
    - **Impact Tree**: Full recursive list of files affected by changes
 3. Highlight critical paths and high-impact files
-4. If no data available, suggest running `/cortex-update-map`
+4. If no data available, ask Claude to run cortex_update_map
 
 ## Usage
 
