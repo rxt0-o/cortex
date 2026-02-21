@@ -1,35 +1,52 @@
 ---
-name: cortex:cortex-health
-description: Show project health score with metrics and trend
+name: cortex
+description: Cortex Master-Dashboard — Health, Decisions, Errors, Conventions, Unfinished, Map
 user_invocable: true
+argument: section
 ---
 
-# Cortex Health
+# Cortex Dashboard
 
-Display the current project health score with detailed metrics.
+Zeigt je nach Argument die passende Cortex-Ansicht. Kein Argument = vollständiges Dashboard.
 
 ## Instructions
 
-1. Use MCP tool `cortex_get_health`
-2. Present:
-   - Overall score (0-100) with trend arrow
-   - Individual metrics breakdown
-   - Recent trend (last 7 snapshots)
-   - Actionable recommendations for improving the score
-3. Use visual indicators for good/warning/bad ranges
+Auswertung des Arguments:
 
-## Metrics
+| Argument | Aktion |
+|---|---|
+| (leer) | Vollständiges Dashboard: Health + letzte Sessions + offene Items |
+| `health` | `cortex_get_health` + History-Trend |
+| `decisions [N\|category]` | `cortex_list_decisions` |
+| `errors [severity\|file]` | `cortex_list_errors` |
+| `conventions [scope]` | `cortex_get_conventions` |
+| `todo` / `unfinished` | `cortex_get_unfinished` |
+| `map [module]` | `cortex_get_map` |
+| `stats` | `cortex_get_stats` |
 
-- Open Errors (unfixed bugs)
-- Unresolved Unfinished (open TODOs)
-- Convention Violations
-- Hot Zones (frequently changed files)
-- Recent Bug Rate (last 7 days)
-- Documentation Coverage
+**Für das vollständige Dashboard** (kein Argument):
+1. `cortex_get_health` → Score + Trend
+2. `cortex_list_sessions` (limit: 5) → Letzte Aktivität
+3. `cortex_get_unfinished` → Offene TODOs
+4. `cortex_list_errors` (limit: 3) → Aktive Fehler
+5. Alles kompakt in einer Tabellen-Übersicht darstellen
 
-## Score Ranges
+## Modell-Hinweis
 
-- 80-100: Healthy
-- 60-79: Needs attention
-- 40-59: Warning
-- 0-39: Critical
+Diese Befehle sind reine Daten-Abfragen. Kein externer Agent nötig — direkte MCP-Tool-Calls.
+
+## Usage
+
+```
+/cortex              — Vollständiges Dashboard
+/cortex health       — Health Score Details
+/cortex decisions    — Alle Architektur-Entscheidungen
+/cortex decisions security  — Nur Security-Entscheidungen
+/cortex errors       — Bekannte Fehler
+/cortex errors high  — Nur kritische Fehler
+/cortex conventions  — Coding Conventions
+/cortex todo         — Offene TODOs
+/cortex map          — Architektur-Übersicht
+/cortex map frontend/src/services  — Modul-Detail
+/cortex stats        — Projekt-Statistiken
+```

@@ -1,30 +1,30 @@
 ---
-name: cortex:cortex-search
-description: Search across all Cortex data — sessions, decisions, errors, learnings
+name: cortex-search
+description: Suche in allen Cortex-Daten — Sessions, Decisions, Errors, Learnings
 user_invocable: true
 argument: query
 ---
 
 # Cortex Search
 
-Search across all Project Cortex data using full-text search.
+Volltextsuche in allen Project-Cortex-Daten.
 
 ## Instructions
 
-1. Use the MCP tool `cortex_search` with the user's query
-2. Present results grouped by type (sessions, decisions, errors, learnings)
-3. Show the most relevant results first
-4. Include context: when it happened, which files were involved
-5. If no results found, suggest alternative search terms
+1. `cortex_search` mit dem Query aufrufen
+2. Ergebnisse nach Typ gruppieren: Sessions → Decisions → Errors → Learnings
+3. Relevanteste zuerst
+4. Kontext zeigen: wann, welche Files, Tags der Session
+5. Wenn keine Ergebnisse: alternative Suchbegriffe vorschlagen
+
+## Modell-Hinweis
+
+Einfache Suche = direkter MCP-Call, kein Subagent nötig.
 
 ## Usage
 
 ```
-/cortex-search <query>
+/cortex-search auth         — Alles zu Authentication
+/cortex-search migration    — Alle Migration-Themen
+/cortex-search supabase rls — RLS-bezogene Einträge
 ```
-
-## Examples
-
-- `/cortex-search authentication` — Find all data related to authentication
-- `/cortex-search teamService bug` — Find errors/fixes related to teamService
-- `/cortex-search migration` — Find decisions about database migrations
