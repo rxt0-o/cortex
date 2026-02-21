@@ -31923,6 +31923,32 @@ server.tool("cortex_get_mood", "Get current system mood based on rolling average
     return { content: [{ type: "text", text: `Error: ${e}` }] };
   }
 });
+server.tool("cortex_add_anchor", "Add an attention anchor \u2014 a topic that always gets priority context", { topic: external_exports3.string(), priority: external_exports3.number().optional().default(5) }, async ({ topic, priority }) => {
+  const db2 = getDb();
+  try {
+    db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
+    return { content: [{ type: "text", text: `Anchor added: "${topic}" (priority ${priority})` }] };
+  } catch {
+    return { content: [{ type: "text", text: `Anchor "${topic}" already exists or could not be added.` }] };
+  }
+});
+server.tool("cortex_remove_anchor", "Remove an attention anchor by topic", { topic: external_exports3.string() }, async ({ topic }) => {
+  const db2 = getDb();
+  const r = db2.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
+  return { content: [{ type: "text", text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
+});
+server.tool("cortex_list_anchors", "List all attention anchors", {}, async () => {
+  const db2 = getDb();
+  try {
+    const anchors = db2.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all();
+    if (anchors.length === 0)
+      return { content: [{ type: "text", text: "No attention anchors set." }] };
+    const lines = anchors.map((a) => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0, 10) ?? "never"})`);
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  } catch (e) {
+    return { content: [{ type: "text", text: `Error: ${e}` }] };
+  }
+});
 async function main() {
   getDb();
   const transport = new StdioServerTransport();
