@@ -303,6 +303,77 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════
+// INDEX DOCS
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_index_docs',
+  'Read CLAUDE.md and docs/ markdown files and store as searchable learnings and decisions',
+  { docs_path: z.string().optional() },
+  async ({ docs_path }) => {
+    getDb();
+    const { readFileSync, readdirSync, existsSync } = await import('fs');
+    const { join } = await import('path');
+
+    const root = docs_path ?? process.cwd();
+    const stats = { gotchas: 0, decisions: 0, docs_indexed: 0 };
+
+    // CLAUDE.md Gotchas parsen: - **#NNN ...** — Beschreibung
+    const claudeMdPath = join(root, 'CLAUDE.md');
+    if (existsSync(claudeMdPath)) {
+      const content = readFileSync(claudeMdPath, 'utf-8');
+      const gotchaRe = /- \*\*#(\d+)[^*]*\*\*\s*[—-]\s*([^\n]+)/g;
+      let m;
+      while ((m = gotchaRe.exec(content))) {
+        const num = m[1];
+        const title = m[2].trim();
+        try {
+          learnings.addLearning({
+            anti_pattern: `Gotcha #${num}: ${title}`,
+            correct_pattern: title,
+            context: `CLAUDE.md Gotcha #${num}`,
+            severity: 'medium',
+            auto_block: false,
+          });
+          stats.gotchas++;
+        } catch { /* Duplikat — ignorieren */ }
+      }
+      stats.docs_indexed++;
+    }
+
+    // docs/*.md H2-Sections als Decisions
+    const docsDir = join(root, 'docs');
+    if (existsSync(docsDir)) {
+      const mdFiles = readdirSync(docsDir).filter((f: string) => f.endsWith('.md'));
+      for (const file of mdFiles) {
+        try {
+          const content = readFileSync(join(docsDir, file), 'utf-8');
+          const sectionRe = /^## (.+)\n([\s\S]*?)(?=\n## |$)/gm;
+          let sm;
+          while ((sm = sectionRe.exec(content))) {
+            const title = sm[1].trim();
+            const body = sm[2].trim();
+            if (body.length < 30) continue;
+            try {
+              decisions.addDecision({
+                title: `[${file}] ${title}`,
+                reasoning: body.slice(0, 1000),
+                category: 'architecture',
+                confidence: 'high',
+              });
+              stats.decisions++;
+            } catch { /* Duplikat */ }
+          }
+          stats.docs_indexed++;
+        } catch { /* nicht lesbar */ }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, ...stats }, null, 2) }] };
+  }
+);
+
+// ═══════════════════════════════════════════════════
 // HOT ZONES
 // ═══════════════════════════════════════════════════
 
