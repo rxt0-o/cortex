@@ -113,6 +113,12 @@ async function main() {
         ).run(today, score, JSON.stringify({ openErrors: oe, openUnfinished: ou }), trend);
       }
     } catch { /* non-critical */ }
+
+    // Auto-Regex Generator (async, non-blocking, max 1x täglich)
+    try {
+      const { runAutoRegex } = await import('./auto-regex.js');
+      await runAutoRegex(cwd);
+    } catch { /* non-critical */ }
   } finally {
     db.close();
   }
