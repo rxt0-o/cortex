@@ -58,7 +58,7 @@ function main() {
 
     // 2. Recent sessions
     const recentSessions = db.prepare(`
-      SELECT id, started_at, summary FROM sessions
+      SELECT id, started_at, summary, tags FROM sessions
       WHERE status != 'active' AND summary IS NOT NULL
       ORDER BY started_at DESC LIMIT 3
     `).all();
@@ -66,7 +66,12 @@ function main() {
     if (recentSessions.length > 0) {
       parts.push('RECENT SESSIONS:');
       for (const s of recentSessions) {
-        parts.push(`  [${timeAgo(s.started_at)}] ${s.summary}`);
+        let tagStr = '';
+        try {
+          const tags = s.tags ? JSON.parse(s.tags) : [];
+          if (tags.length > 0) tagStr = ` [${tags.join(', ')}]`;
+        } catch { /* ignore */ }
+        parts.push(`  [${timeAgo(s.started_at)}] ${s.summary}${tagStr}`);
       }
     }
 
@@ -97,14 +102,26 @@ function main() {
       }
     }
 
-    // 5. Active learnings
-    const activeLearnings = db.prepare(`
-      SELECT anti_pattern, correct_pattern FROM learnings WHERE auto_block = 1 ORDER BY occurrences DESC LIMIT 10
+    // 5a. Auto-block Learnings MIT regex (werden in PreToolUse aktiv gecheckt)
+    const blockedLearnings = db.prepare(`
+      SELECT anti_pattern, correct_pattern FROM learnings
+      WHERE auto_block = 1 AND detection_regex IS NOT NULL ORDER BY occurrences DESC LIMIT 6
     `).all();
 
-    if (activeLearnings.length > 0) {
-      parts.push('ACTIVE PATTERNS (auto-block):');
-      for (const l of activeLearnings) parts.push(`  X ${l.anti_pattern} -> ${l.correct_pattern}`);
+    // 5b. Auto-block Learnings OHNE regex (müssen manuell beachtet werden)
+    const manualLearnings = db.prepare(`
+      SELECT anti_pattern, correct_pattern FROM learnings
+      WHERE auto_block = 1 AND detection_regex IS NULL ORDER BY occurrences DESC LIMIT 10
+    `).all();
+
+    if (blockedLearnings.length > 0) {
+      parts.push('AUTO-BLOCKED PATTERNS (regex-enforced):');
+      for (const l of blockedLearnings) parts.push(`  X ${l.anti_pattern} -> ${l.correct_pattern}`);
+    }
+
+    if (manualLearnings.length > 0) {
+      parts.push('CRITICAL RULES (remember — no regex check):');
+      for (const l of manualLearnings) parts.push(`  ! ${l.anti_pattern}`);
     }
 
     // 6. Health
