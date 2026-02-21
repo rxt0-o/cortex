@@ -55,11 +55,13 @@ Rules:
 - Example output: auth\.uid\(\)(?!\s*\))
 - If you cannot create a reliable regex, return: SKIP`;
 
-        const result = await execFileAsync('claude', [
+        // Windows: claude ist ein .cmd-Wrapper → shell: true nötig
+        const claudePath = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+        const result = await execFileAsync(claudePath, [
           '--model', 'claude-haiku-4-5-20251001',
           '--max-tokens', '80',
           '-p', prompt,
-        ], { timeout: 15000, encoding: 'utf-8' });
+        ], { timeout: 15000, encoding: 'utf-8', shell: process.platform === 'win32' });
 
         const regex = result.stdout.trim();
         if (!regex || regex === 'SKIP' || regex.length > 200) continue;

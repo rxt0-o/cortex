@@ -166,11 +166,13 @@ Reply with ONLY:
 SUMMARY: <1-2 sentence summary>
 TAGS: <comma-separated tags from: bugfix,feature,refactor,security,database,frontend,backend,docs,config>`;
 
-    const result = await execFileAsync('claude', [
+    // Windows: claude ist ein .cmd-Wrapper → shell: true nötig
+    const claudePath = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+    const result = await execFileAsync(claudePath, [
       '--model', 'claude-haiku-4-5-20251001',
       '--max-tokens', '150',
       '-p', prompt,
-    ], { timeout: 20000, encoding: 'utf-8' });
+    ], { timeout: 20000, encoding: 'utf-8', shell: process.platform === 'win32' });
 
     const output = result.stdout.trim();
     const summaryMatch = output.match(/SUMMARY:\s*(.+)/);
