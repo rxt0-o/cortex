@@ -98,6 +98,9 @@ async function main() {
       appendFileSync(queuePath, JSON.stringify(event) + '\n', 'utf-8');
     } catch { /* nicht kritisch */ }
 
+    // Mark stale decisions (>90 days without review)
+    try { db.prepare(`UPDATE decisions SET stale=1 WHERE stale!=1 AND created_at < datetime('now','-90 days') AND (reviewed_at IS NULL OR reviewed_at < datetime('now','-90 days'))`).run(); } catch {}
+
     // Health snapshot
     try {
       const last = db.prepare('SELECT date FROM health_snapshots ORDER BY date DESC LIMIT 1').get();
@@ -113,6 +116,12 @@ async function main() {
         ).run(today, score, JSON.stringify({ openErrors: oe, openUnfinished: ou }), trend);
       }
     } catch { /* non-critical */ }
+
+    // Memory Consolidation: archive unused learnings, promote core memories
+    try {
+      db.prepare(`UPDATE learnings SET archived=1 WHERE auto_block=1 AND theoretical_hits=0 AND created_at < datetime('now','-30 days') AND core_memory!=1`).run();
+      db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
+    } catch {}
 
     // Auto-Regex Generator (async, non-blocking, max 1x täglich)
     try {
