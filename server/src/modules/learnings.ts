@@ -11,6 +11,9 @@ export interface Learning {
   severity: string;
   occurrences: number;
   auto_block: boolean;
+  access_count: number;
+  last_accessed: string | null;
+  archived_at: string | null;
 }
 
 export interface AddLearningInput {
@@ -46,6 +49,7 @@ export function getLearning(id: number): Learning | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM learnings WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
+  db.prepare('UPDATE learnings SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
   return { ...row, auto_block: Boolean(row.auto_block) } as unknown as Learning;
 }
 
@@ -57,6 +61,7 @@ export function listLearnings(options: {
   const db = getDb();
   const conditions: string[] = [];
   const params: SQLInputValue[] = [];
+  conditions.push('archived_at IS NULL');
 
   if (options.severity) {
     conditions.push('severity = ?');
@@ -103,7 +108,7 @@ export function searchLearnings(query: string, limit = 10): Learning[] {
 
 export function getAutoBlockLearnings(): Learning[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM learnings WHERE auto_block = 1').all() as Record<string, unknown>[];
+  const rows = db.prepare('SELECT * FROM learnings WHERE auto_block = 1 AND archived_at IS NULL').all() as Record<string, unknown>[];
   return rows.map((row) => ({ ...row, auto_block: true })) as unknown as Learning[];
 }
 
@@ -168,4 +173,25 @@ export function checkContentAgainstLearnings(content: string): Array<{
   }
 
   return matches;
+}
+
+export interface LearningPruningResult {
+  learnings_archived: number;
+}
+
+export function runLearningsPruning(): LearningPruningResult {
+  const db = getDb();
+  // auto_block = 1 wird NIEMALS archiviert
+  const result = db.prepare(`
+    UPDATE learnings
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND auto_block = 0
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { learnings_archived: Number(result.changes) };
 }
