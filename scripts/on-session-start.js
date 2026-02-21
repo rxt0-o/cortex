@@ -168,6 +168,15 @@ function main() {
     try { staleCount = db.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get()?.c || 0; } catch {}
     if (staleCount > 0) parts.push(`  STALE: ${staleCount} decisions >90 days — still current? (/cortex decisions)`);
 
+    // First-run onboarding hint
+    try {
+      const onboarded = db.prepare(`SELECT value FROM meta WHERE key='onboarding_complete'`).get();
+      if (!onboarded) {
+        parts.push('');
+        parts.push('SETUP: Run cortex_onboard() to personalize Cortex with your profile and attention anchors.');
+      }
+    } catch {}
+
     if (parts.length === 0) {
       // Still register the session even if no context to show
       db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, new Date().toISOString(), 'active');

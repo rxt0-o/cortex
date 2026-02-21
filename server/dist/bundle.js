@@ -31949,6 +31949,43 @@ server.tool("cortex_list_anchors", "List all attention anchors", {}, async () =>
     return { content: [{ type: "text", text: `Error: ${e}` }] };
   }
 });
+server.tool("cortex_onboard", "Run first-time onboarding: set up user profile and attention anchors", {
+  name: external_exports3.string().describe("Your name"),
+  role: external_exports3.string().describe("Your role (e.g. solo developer, lead engineer)"),
+  working_style: external_exports3.string().describe("How you prefer to work (e.g. test-driven, prototype-first)"),
+  expertise_areas: external_exports3.string().describe("Your main areas of expertise (comma-separated)"),
+  anchors: external_exports3.array(external_exports3.string()).describe("3-5 topics you always want Cortex to track").optional()
+}, async ({ name, role, working_style, expertise_areas, anchors }) => {
+  const db2 = getDb();
+  const ts = (/* @__PURE__ */ new Date()).toISOString();
+  db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, updated_at)
+      VALUES (1, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,
+        working_style=excluded.working_style, expertise_areas=excluded.expertise_areas,
+        updated_at=datetime('now')`).run(name, role, working_style, expertise_areas);
+  const addedAnchors = [];
+  if (anchors && anchors.length > 0) {
+    for (const topic of anchors.slice(0, 5)) {
+      try {
+        db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, 8)`).run(topic);
+        addedAnchors.push(topic);
+      } catch {
+      }
+    }
+  }
+  db2.prepare(`INSERT INTO meta (key, value) VALUES ('onboarding_complete', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ts);
+  const lines = [
+    `Welcome, ${name}! Cortex is now configured.`,
+    `Role: ${role}`,
+    `Working style: ${working_style}`,
+    `Expertise: ${expertise_areas}`,
+    addedAnchors.length > 0 ? `Anchors: ${addedAnchors.join(", ")}` : "",
+    "",
+    "Cortex will now track your sessions, decisions, errors, and learnings.",
+    "Use /resume to get a re-entry brief at any time."
+  ].filter((l) => l !== "");
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+});
 async function main() {
   getDb();
   const transport = new StdioServerTransport();
