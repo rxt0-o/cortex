@@ -15,6 +15,9 @@ export interface CortexError {
   files_involved: string[] | null;
   prevention_rule: string | null;
   severity: string;
+  access_count: number;
+  last_accessed: string | null;
+  archived_at: string | null;
 }
 
 export interface AddErrorInput {
@@ -101,6 +104,7 @@ export function getError(id: number): CortexError | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM errors WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
+  db.prepare('UPDATE errors SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
   return {
     ...row,
     files_involved: parseJson<string[]>(row.files_involved as string),
@@ -116,6 +120,7 @@ export function listErrors(options: {
   const db = getDb();
   const conditions: string[] = [];
   const params: SQLInputValue[] = [];
+  conditions.push('archived_at IS NULL');
 
   if (options.severity) {
     conditions.push('severity = ?');
@@ -211,6 +216,25 @@ export function updateError(input: UpdateErrorInput): CortexError | null {
   values.push(input.id);
   db.prepare(`UPDATE errors SET ${sets.join(', ')} WHERE id = ?`).run(...values);
   return getError(input.id);
+}
+
+export interface ErrorPruningResult {
+  errors_archived: number;
+}
+
+export function runErrorsPruning(): ErrorPruningResult {
+  const db = getDb();
+  const result = db.prepare(`
+    UPDATE errors
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND (
+        (first_seen < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (first_seen < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { errors_archived: Number(result.changes) };
 }
 
 export function getPreventionRules(): Array<{ id: number; prevention_rule: string; error_message: string }> {
