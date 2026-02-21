@@ -90,5 +90,25 @@ export function openDb(cwd) {
   // Ensure schema
   const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").get();
   if (!t) db.exec(SCHEMA);  // eslint-disable-line
+
+  // v04 migrations — idempotent, Fehler werden ignoriert (Spalte existiert bereits)
+  const v04migrations = [
+    `ALTER TABLE unfinished ADD COLUMN snooze_until TEXT`,
+    `ALTER TABLE unfinished ADD COLUMN priority_score INTEGER DEFAULT 50`,
+    `ALTER TABLE learnings ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN core_memory INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN example_code TEXT`,
+    `ALTER TABLE learnings ADD COLUMN theoretical_hits INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN practical_violations INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN stale INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN reviewed_at TEXT`,
+    `ALTER TABLE decisions ADD COLUMN counter_arguments TEXT`,
+    `ALTER TABLE errors ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE sessions ADD COLUMN sentiment TEXT`,
+    `CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, tags TEXT, created_at TEXT DEFAULT (datetime('now')), session_id TEXT)`,
+  ];
+  for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
+
   return db;
 }
