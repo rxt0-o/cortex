@@ -10,6 +10,7 @@ export interface Session {
   chain_id: string | null;
   chain_label: string | null;
   status: string;
+  tags: string[] | null;
 }
 
 export interface KeyChange {
@@ -52,6 +53,7 @@ export function getSession(id: string): Session | null {
   return {
     ...row,
     key_changes: parseJson<KeyChange[]>(row.key_changes as string),
+    tags: parseJson<string[]>(row.tags as string),
   } as Session;
 }
 
@@ -92,6 +94,7 @@ export function listSessions(limit = 20, chainId?: string): Session[] {
   return rows.map((row) => ({
     ...row,
     key_changes: parseJson<KeyChange[]>(row.key_changes as string),
+    tags: parseJson<string[]>(row.tags as string),
   })) as Session[];
 }
 

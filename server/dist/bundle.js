@@ -30180,7 +30180,8 @@ function getSession(id) {
     return null;
   return {
     ...row,
-    key_changes: parseJson(row.key_changes)
+    key_changes: parseJson(row.key_changes),
+    tags: parseJson(row.tags)
   };
 }
 function updateSession(id, input) {
@@ -30234,7 +30235,8 @@ function listSessions(limit = 20, chainId) {
   const rows = db2.prepare(sql).all(...params);
   return rows.map((row) => ({
     ...row,
-    key_changes: parseJson(row.key_changes)
+    key_changes: parseJson(row.key_changes),
+    tags: parseJson(row.tags)
   }));
 }
 function searchSessions(query, limit = 10) {
@@ -30457,6 +30459,36 @@ function getErrorsForFiles(filePaths) {
     return true;
   });
 }
+function updateError(input) {
+  const db2 = getDb();
+  const sets = [];
+  const values = [];
+  if (input.fix_description !== void 0) {
+    sets.push("fix_description = ?");
+    values.push(input.fix_description);
+  }
+  if (input.root_cause !== void 0) {
+    sets.push("root_cause = ?");
+    values.push(input.root_cause);
+  }
+  if (input.fix_diff !== void 0) {
+    sets.push("fix_diff = ?");
+    values.push(input.fix_diff);
+  }
+  if (input.prevention_rule !== void 0) {
+    sets.push("prevention_rule = ?");
+    values.push(input.prevention_rule);
+  }
+  if (input.severity !== void 0) {
+    sets.push("severity = ?");
+    values.push(input.severity);
+  }
+  if (sets.length === 0)
+    return getError(input.id);
+  values.push(input.id);
+  db2.prepare(`UPDATE errors SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  return getError(input.id);
+}
 function getPreventionRules() {
   const db2 = getDb();
   return db2.prepare(`
@@ -30526,6 +30558,45 @@ function getAutoBlockLearnings() {
   const db2 = getDb();
   const rows = db2.prepare("SELECT * FROM learnings WHERE auto_block = 1").all();
   return rows.map((row) => ({ ...row, auto_block: true }));
+}
+function updateLearning(input) {
+  const db2 = getDb();
+  const sets = [];
+  const values = [];
+  if (input.anti_pattern !== void 0) {
+    sets.push("anti_pattern = ?");
+    values.push(input.anti_pattern);
+  }
+  if (input.correct_pattern !== void 0) {
+    sets.push("correct_pattern = ?");
+    values.push(input.correct_pattern);
+  }
+  if ("detection_regex" in input) {
+    sets.push("detection_regex = ?");
+    values.push(input.detection_regex ?? null);
+  }
+  if (input.context !== void 0) {
+    sets.push("context = ?");
+    values.push(input.context);
+  }
+  if (input.severity !== void 0) {
+    sets.push("severity = ?");
+    values.push(input.severity);
+  }
+  if (input.auto_block !== void 0) {
+    sets.push("auto_block = ?");
+    values.push(input.auto_block ? 1 : 0);
+  }
+  if (sets.length === 0)
+    return getLearning(input.id);
+  values.push(input.id);
+  db2.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  return getLearning(input.id);
+}
+function deleteLearning(id) {
+  const db2 = getDb();
+  const result = db2.prepare("DELETE FROM learnings WHERE id = ?").run(id);
+  return result.changes > 0;
 }
 function incrementLearningOccurrence(id) {
   const db2 = getDb();
@@ -30941,13 +31012,13 @@ function calculateHealth() {
   const openErrors = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL").get().count;
   const unresolvedUnfinished = db2.prepare("SELECT COUNT(*) as count FROM unfinished WHERE resolved_at IS NULL").get().count;
   const conventionViolations = db2.prepare("SELECT SUM(violation_count) as total FROM conventions").get().total ?? 0;
-  const hotZoneCount = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE change_count > 10").get().count;
+  const hotZoneCount = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE change_count > 20").get().count;
   const avgChange = db2.prepare("SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0").get().avg ?? 0;
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString();
-  const recentBugs = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE last_seen > ?").get(weekAgo).count;
+  const recentBugs = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL").get(weekAgo).count;
   const totalFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files").get().count;
-  const docFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE description IS NOT NULL").get().count;
-  const docCoverage = totalFiles > 0 ? Math.round(docFiles / totalFiles * 100) : 100;
+  const typedFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL").get().count;
+  const docCoverage = totalFiles > 0 ? Math.round(typedFiles / totalFiles * 100) : 100;
   return {
     openErrors,
     unresolvedUnfinished,
@@ -31014,10 +31085,14 @@ server.tool("cortex_save_session", "Save or update a session with summary, chang
 });
 server.tool("cortex_list_sessions", "List recent sessions with summaries", {
   limit: external_exports3.number().optional(),
-  chain_id: external_exports3.string().optional()
-}, async ({ limit, chain_id }) => {
+  chain_id: external_exports3.string().optional(),
+  tag: external_exports3.string().optional()
+}, async ({ limit, chain_id, tag }) => {
   getDb();
-  const result = listSessions(limit ?? 20, chain_id);
+  let result = listSessions(limit ?? 20, chain_id);
+  if (tag) {
+    result = result.filter((s) => s.tags?.includes(tag));
+  }
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 });
 server.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings", {
@@ -31358,6 +31433,36 @@ server.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/do
     content: [{ type: "text", text: JSON.stringify({ success: !!item, item }, null, 2) }]
   };
 });
+server.tool("cortex_update_learning", "Update an existing learning/anti-pattern entry (e.g. add detection_regex, change severity, toggle auto_block)", {
+  id: external_exports3.number(),
+  anti_pattern: external_exports3.string().optional(),
+  correct_pattern: external_exports3.string().optional(),
+  detection_regex: external_exports3.string().nullable().optional(),
+  context: external_exports3.string().optional(),
+  severity: external_exports3.enum(["low", "medium", "high"]).optional(),
+  auto_block: external_exports3.boolean().optional()
+}, async (input) => {
+  getDb();
+  const learning = updateLearning(input);
+  return { content: [{ type: "text", text: JSON.stringify(learning, null, 2) }] };
+});
+server.tool("cortex_delete_learning", "Delete a learning/anti-pattern entry by ID", { id: external_exports3.number() }, async ({ id }) => {
+  getDb();
+  const success2 = deleteLearning(id);
+  return { content: [{ type: "text", text: JSON.stringify({ success: success2, deleted_id: id }, null, 2) }] };
+});
+server.tool("cortex_update_error", "Update an existing error record \u2014 add fix description, prevention rule, or change severity", {
+  id: external_exports3.number(),
+  fix_description: external_exports3.string().optional(),
+  root_cause: external_exports3.string().optional(),
+  fix_diff: external_exports3.string().optional(),
+  prevention_rule: external_exports3.string().optional(),
+  severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional()
+}, async (input) => {
+  getDb();
+  const error48 = updateError(input);
+  return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
+});
 server.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional() }, async ({ auto_block_only, limit }) => {
   getDb();
   const result = listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
@@ -31378,6 +31483,44 @@ server.tool("cortex_get_stats", "Get overall project statistics: sessions, decis
     unfinished_open: q("SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL")
   };
   return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+});
+server.tool("cortex_import_git_history", "Import git log history to populate Hot Zones with historical file change frequency", {
+  root_path: external_exports3.string().optional(),
+  max_commits: external_exports3.number().optional()
+}, async ({ root_path, max_commits }) => {
+  const { execFileSync } = await import("child_process");
+  const cwd = root_path ?? process.cwd();
+  const limit = max_commits ?? 500;
+  let gitOutput;
+  try {
+    gitOutput = execFileSync("git", ["log", `--max-count=${limit}`, "--name-only", "--pretty=format:"], { cwd, encoding: "utf-8" });
+  } catch (e) {
+    return { content: [{ type: "text", text: JSON.stringify({ error: "git log failed", detail: String(e) }) }] };
+  }
+  const db2 = getDb();
+  const fileCounts = /* @__PURE__ */ new Map();
+  for (const line of gitOutput.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed)
+      continue;
+    if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed))
+      continue;
+    fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
+  }
+  const stmt = db2.prepare(`
+      INSERT INTO project_files (path, change_count, last_changed)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(path) DO UPDATE SET
+        change_count = MAX(project_files.change_count, excluded.change_count)
+    `);
+  let imported = 0;
+  for (const [path3, count] of fileCounts) {
+    stmt.run(path3, count);
+    imported++;
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify({ success: true, files_imported: imported, commits_analyzed: limit }, null, 2) }]
+  };
 });
 async function main() {
   getDb();

@@ -42,9 +42,13 @@ server.tool('cortex_save_session', 'Save or update a session with summary, chang
 server.tool('cortex_list_sessions', 'List recent sessions with summaries', {
     limit: z.number().optional(),
     chain_id: z.string().optional(),
-}, async ({ limit, chain_id }) => {
+    tag: z.string().optional(),
+}, async ({ limit, chain_id, tag }) => {
     getDb();
-    const result = sessions.listSessions(limit ?? 20, chain_id);
+    let result = sessions.listSessions(limit ?? 20, chain_id);
+    if (tag) {
+        result = result.filter(s => s.tags?.includes(tag));
+    }
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
 // ═══════════════════════════════════════════════════
@@ -450,6 +454,36 @@ server.tool('cortex_resolve_unfinished', 'Mark an unfinished item as resolved/do
         content: [{ type: 'text', text: JSON.stringify({ success: !!item, item }, null, 2) }],
     };
 });
+server.tool('cortex_update_learning', 'Update an existing learning/anti-pattern entry (e.g. add detection_regex, change severity, toggle auto_block)', {
+    id: z.number(),
+    anti_pattern: z.string().optional(),
+    correct_pattern: z.string().optional(),
+    detection_regex: z.string().nullable().optional(),
+    context: z.string().optional(),
+    severity: z.enum(['low', 'medium', 'high']).optional(),
+    auto_block: z.boolean().optional(),
+}, async (input) => {
+    getDb();
+    const learning = learnings.updateLearning(input);
+    return { content: [{ type: 'text', text: JSON.stringify(learning, null, 2) }] };
+});
+server.tool('cortex_delete_learning', 'Delete a learning/anti-pattern entry by ID', { id: z.number() }, async ({ id }) => {
+    getDb();
+    const success = learnings.deleteLearning(id);
+    return { content: [{ type: 'text', text: JSON.stringify({ success, deleted_id: id }, null, 2) }] };
+});
+server.tool('cortex_update_error', 'Update an existing error record — add fix description, prevention rule, or change severity', {
+    id: z.number(),
+    fix_description: z.string().optional(),
+    root_cause: z.string().optional(),
+    fix_diff: z.string().optional(),
+    prevention_rule: z.string().optional(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+}, async (input) => {
+    getDb();
+    const error = errors.updateError(input);
+    return { content: [{ type: 'text', text: JSON.stringify(error, null, 2) }] };
+});
 server.tool('cortex_list_learnings', 'List recorded anti-patterns and learnings', { auto_block_only: z.boolean().optional(), limit: z.number().optional() }, async ({ auto_block_only, limit }) => {
     getDb();
     const result = learnings.listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
@@ -470,6 +504,45 @@ server.tool('cortex_get_stats', 'Get overall project statistics: sessions, decis
         unfinished_open: q('SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL'),
     };
     return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
+});
+server.tool('cortex_import_git_history', 'Import git log history to populate Hot Zones with historical file change frequency', {
+    root_path: z.string().optional(),
+    max_commits: z.number().optional(),
+}, async ({ root_path, max_commits }) => {
+    const { execFileSync } = await import('child_process');
+    const cwd = root_path ?? process.cwd();
+    const limit = max_commits ?? 500;
+    let gitOutput;
+    try {
+        gitOutput = execFileSync('git', ['log', `--max-count=${limit}`, '--name-only', '--pretty=format:'], { cwd, encoding: 'utf-8' });
+    }
+    catch (e) {
+        return { content: [{ type: 'text', text: JSON.stringify({ error: 'git log failed', detail: String(e) }) }] };
+    }
+    const db = getDb();
+    const fileCounts = new Map();
+    for (const line of gitOutput.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed)
+            continue;
+        if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed))
+            continue;
+        fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
+    }
+    const stmt = db.prepare(`
+      INSERT INTO project_files (path, change_count, last_changed)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(path) DO UPDATE SET
+        change_count = MAX(project_files.change_count, excluded.change_count)
+    `);
+    let imported = 0;
+    for (const [path, count] of fileCounts) {
+        stmt.run(path, count);
+        imported++;
+    }
+    return {
+        content: [{ type: 'text', text: JSON.stringify({ success: true, files_imported: imported, commits_analyzed: limit }, null, 2) }],
+    };
 });
 // ═══════════════════════════════════════════════════
 // STARTUP

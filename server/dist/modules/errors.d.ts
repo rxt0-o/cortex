@@ -34,6 +34,15 @@ export declare function listErrors(options?: {
 }): CortexError[];
 export declare function searchErrors(query: string, limit?: number): CortexError[];
 export declare function getErrorsForFiles(filePaths: string[]): CortexError[];
+export interface UpdateErrorInput {
+    id: number;
+    fix_description?: string;
+    root_cause?: string;
+    fix_diff?: string;
+    prevention_rule?: string;
+    severity?: string;
+}
+export declare function updateError(input: UpdateErrorInput): CortexError | null;
 export declare function getPreventionRules(): Array<{
     id: number;
     prevention_rule: string;

@@ -16,6 +16,7 @@ export function getSession(id) {
     return {
         ...row,
         key_changes: parseJson(row.key_changes),
+        tags: parseJson(row.tags),
     };
 }
 export function updateSession(id, input) {
@@ -70,6 +71,7 @@ export function listSessions(limit = 20, chainId) {
     return rows.map((row) => ({
         ...row,
         key_changes: parseJson(row.key_changes),
+        tags: parseJson(row.tags),
     }));
 }
 export function searchSessions(query, limit = 10) {

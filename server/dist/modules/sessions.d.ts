@@ -8,6 +8,7 @@ export interface Session {
     chain_id: string | null;
     chain_label: string | null;
     status: string;
+    tags: string[] | null;
 }
 export interface KeyChange {
     file: string;

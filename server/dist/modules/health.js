@@ -4,15 +4,15 @@ export function calculateHealth() {
     const openErrors = db.prepare('SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL').get().count;
     const unresolvedUnfinished = db.prepare('SELECT COUNT(*) as count FROM unfinished WHERE resolved_at IS NULL').get().count;
     const conventionViolations = db.prepare('SELECT SUM(violation_count) as total FROM conventions').get().total ?? 0;
-    const hotZoneCount = db.prepare('SELECT COUNT(*) as count FROM project_files WHERE change_count > 10').get().count;
+    const hotZoneCount = db.prepare('SELECT COUNT(*) as count FROM project_files WHERE change_count > 20').get().count;
     const avgChange = db.prepare('SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0').get().avg ?? 0;
-    // Bugs in last 7 days
+    // Unfixte Bugs in den letzten 7 Tagen (behobene Fehler nicht bestrafen)
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const recentBugs = db.prepare('SELECT COUNT(*) as count FROM errors WHERE last_seen > ?').get(weekAgo).count;
-    // Files with descriptions vs total
+    const recentBugs = db.prepare('SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL').get(weekAgo).count;
+    // Files with known file_type vs total (proxy für "wie gut kennt Cortex das Projekt")
     const totalFiles = db.prepare('SELECT COUNT(*) as count FROM project_files').get().count;
-    const docFiles = db.prepare('SELECT COUNT(*) as count FROM project_files WHERE description IS NOT NULL').get().count;
-    const docCoverage = totalFiles > 0 ? Math.round((docFiles / totalFiles) * 100) : 100;
+    const typedFiles = db.prepare('SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL').get().count;
+    const docCoverage = totalFiles > 0 ? Math.round((typedFiles / totalFiles) * 100) : 100;
     return {
         openErrors,
         unresolvedUnfinished,
