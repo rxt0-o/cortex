@@ -97,18 +97,32 @@ export function listSessions(limit = 20, chainId?: string): Session[] {
 
 export function searchSessions(query: string, limit = 10): Session[] {
   const db = getDb();
-  const rows = db.prepare(`
-    SELECT s.* FROM sessions s
-    JOIN sessions_fts fts ON s.rowid = fts.rowid
-    WHERE sessions_fts MATCH ?
-    ORDER BY rank
-    LIMIT ?
-  `).all(query, limit) as Record<string, unknown>[];
-
-  return rows.map((row) => ({
-    ...row,
-    key_changes: parseJson<KeyChange[]>(row.key_changes as string),
-  })) as Session[];
+  try {
+    const rows = db.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN sessions_fts fts ON s.rowid = fts.rowid
+      WHERE sessions_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(query, limit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      ...row,
+      key_changes: parseJson<KeyChange[]>(row.key_changes as string),
+    })) as Session[];
+  } catch {
+    // FTS-Tabelle nicht vorhanden -- LIKE-Fallback
+    const likeQuery = `%${query}%`;
+    const rows = db.prepare(`
+      SELECT * FROM sessions
+      WHERE summary LIKE ? OR key_changes LIKE ?
+      ORDER BY started_at DESC
+      LIMIT ?
+    `).all(likeQuery, likeQuery, limit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      ...row,
+      key_changes: parseJson<KeyChange[]>(row.key_changes as string),
+    })) as Session[];
+  }
 }
 
 export function getRecentSummaries(limit = 3): Array<{ id: string; started_at: string; summary: string | null }> {
