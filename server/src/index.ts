@@ -545,6 +545,56 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════
+// RESOLVE UNFINISHED / LIST LEARNINGS / STATS
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_resolve_unfinished',
+  'Mark an unfinished item as resolved/done',
+  { id: z.number(), session_id: z.string().optional() },
+  async ({ id, session_id }) => {
+    getDb();
+    const item = unfinished.resolveUnfinished(id, session_id);
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: !!item, item }, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  'cortex_list_learnings',
+  'List recorded anti-patterns and learnings',
+  { auto_block_only: z.boolean().optional(), limit: z.number().optional() },
+  async ({ auto_block_only, limit }) => {
+    getDb();
+    const result = learnings.listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'cortex_get_stats',
+  'Get overall project statistics: sessions, decisions, errors, files, learnings',
+  {},
+  async () => {
+    const db = getDb();
+    const q = (sql: string) => (db.prepare(sql).get() as { c: number }).c;
+    const stats = {
+      sessions: q('SELECT COUNT(*) as c FROM sessions'),
+      decisions: q('SELECT COUNT(*) as c FROM decisions'),
+      errors: q('SELECT COUNT(*) as c FROM errors'),
+      learnings: q('SELECT COUNT(*) as c FROM learnings'),
+      conventions: q('SELECT COUNT(*) as c FROM conventions'),
+      files_tracked: q('SELECT COUNT(*) as c FROM project_files'),
+      modules: q('SELECT COUNT(*) as c FROM project_modules'),
+      dependencies: q('SELECT COUNT(*) as c FROM dependencies'),
+      unfinished_open: q('SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL'),
+    };
+    return { content: [{ type: 'text' as const, text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════
 

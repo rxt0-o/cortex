@@ -57,11 +57,12 @@ export function listUnfinished(options: {
   return db.prepare(sql).all(...params) as unknown as UnfinishedItem[];
 }
 
-export function resolveUnfinished(id: number, resolvedSession?: string): void {
+export function resolveUnfinished(id: number, resolvedSession?: string): unknown {
   const db = getDb();
   db.prepare(`
     UPDATE unfinished SET resolved_at = ?, resolved_session = ? WHERE id = ?
   `).run(now(), resolvedSession ?? null, id);
+  return db.prepare('SELECT * FROM unfinished WHERE id = ?').get(id);
 }
 
 export function getOpenCount(): number {
