@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
 let db = null;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS decisions (
   alternatives TEXT,
   files_affected TEXT,
   superseded_by INTEGER REFERENCES decisions(id),
-  confidence TEXT DEFAULT 'high'
+  confidence TEXT DEFAULT 'high',
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS errors (
@@ -42,7 +45,10 @@ CREATE TABLE IF NOT EXISTS errors (
   fix_diff TEXT,
   files_involved TEXT,
   prevention_rule TEXT,
-  severity TEXT DEFAULT 'medium'
+  severity TEXT DEFAULT 'medium',
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS learnings (
@@ -55,7 +61,10 @@ CREATE TABLE IF NOT EXISTS learnings (
   context TEXT NOT NULL,
   severity TEXT DEFAULT 'medium',
   occurrences INTEGER DEFAULT 1,
-  auto_block INTEGER DEFAULT 0
+  auto_block INTEGER DEFAULT 0,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS project_modules (
@@ -155,6 +164,9 @@ CREATE INDEX IF NOT EXISTS idx_dependencies_target ON dependencies(target_file);
 CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id);
 CREATE INDEX IF NOT EXISTS idx_diffs_file ON diffs(file_path);
 CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at);
+CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
+CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
+CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
 `;
 function getDbPath(projectDir) {
     const dir = projectDir ?? process.cwd();
@@ -186,6 +198,26 @@ function initSchema(database) {
     }
     const current = database.prepare('SELECT version FROM schema_version').get();
     if (!current || current.version < SCHEMA_VERSION) {
+        // Migration v1 auf v2: Access-Counter und Archivierung
+        if (!current || current.version < 2) {
+            const migrations = [
+                'ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0',
+                'ALTER TABLE decisions ADD COLUMN last_accessed TEXT',
+                'ALTER TABLE decisions ADD COLUMN archived_at TEXT',
+                'ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0',
+                'ALTER TABLE learnings ADD COLUMN last_accessed TEXT',
+                'ALTER TABLE learnings ADD COLUMN archived_at TEXT',
+                'ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0',
+                'ALTER TABLE errors ADD COLUMN last_accessed TEXT',
+                'ALTER TABLE errors ADD COLUMN archived_at TEXT',
+            ];
+            for (const sql of migrations) {
+                try {
+                    database.exec(sql);
+                }
+                catch { /* Spalte existiert bereits */ }
+            }
+        }
         database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
     }
 }
