@@ -1,6 +1,6 @@
 {
   "name": "cortex-daemon",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -12,5 +12,7 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
-  "engines": { "node": ">=22.0.0" }
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }
