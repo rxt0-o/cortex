@@ -78,23 +78,33 @@ server.tool(
     limit: z.number().optional(),
   },
   async ({ query, limit }) => {
-    getDb();
-    const maxResults = limit ?? 10;
-    const results: Array<{ type: string; data: unknown }> = [];
+  const db = getDb();
+  const maxResults = limit ?? 10;
+  const lines: string[] = [];
 
-    const sessionResults = sessions.searchSessions(query, maxResults);
-    for (const s of sessionResults) results.push({ type: 'session', data: s });
+  const sessionResults = sessions.searchSessions(query, maxResults);
+  for (const s of sessionResults) lines.push(`[SESSION] ${(s as any).summary ?? (s as any).id}`);
 
-    const decisionResults = decisions.searchDecisions(query, maxResults);
-    for (const d of decisionResults) results.push({ type: 'decision', data: d });
+  const decisionResults = decisions.searchDecisions(query, maxResults);
+  for (const d of decisionResults) lines.push(`[DECISION] ${(d as any).title}`);
 
-    const errorResults = errors.searchErrors(query, maxResults);
-    for (const e of errorResults) results.push({ type: 'error', data: e });
+  const errorResults = errors.searchErrors(query, maxResults);
+  for (const e of errorResults) lines.push(`[ERROR] ${(e as any).error_message}`);
 
-    const learningResults = learnings.searchLearnings(query, maxResults);
-    for (const l of learningResults) results.push({ type: 'learning', data: l });
+  const learningResults = learnings.searchLearnings(query, maxResults);
+  for (const l of learningResults) lines.push(`[LEARNING] ${(l as any).anti_pattern}`);
 
-    return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
+  try {
+    const noteResults = db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${query}%`, maxResults) as any[];
+    for (const n of noteResults) lines.push(`[NOTE] ${n.text.slice(0, 120)}`);
+  } catch {}
+
+  try {
+    const unfinishedResults = db.prepare(`SELECT * FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?`).all(`%${query}%`, maxResults) as any[];
+    for (const u of unfinishedResults) lines.push(`[TODO] ${u.description}`);
+  } catch {}
+
+  return { content: [{ type: 'text' as const, text: lines.join('\n') || 'No results.' }] };
   }
 );
 
@@ -762,6 +772,50 @@ server.tool(
     };
   }
 );
+
+server.tool('cortex_snooze', 'Schedule a future session reminder', {
+  description: z.string(),
+  until: z.string().describe('Relative 3d/1w or ISO date 2026-03-01'),
+  session_id: z.string().optional(),
+}, async ({ description, until, session_id }) => {
+  let d = new Date();
+  if (/^\d+d$/i.test(until)) d.setDate(d.getDate() + parseInt(until));
+  else if (/^\d+w$/i.test(until)) d.setDate(d.getDate() + parseInt(until) * 7);
+  else d = new Date(until);
+  getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until) VALUES (?,?,?,?,?)`).run(description, 'snoozed', 'medium', session_id??null, d.toISOString());
+  return { content: [{ type: 'text' as const, text: `Reminder set for ${d.toISOString().slice(0,10)}` }] };
+});
+
+// ═══════════════════════════════════════════════════
+// NOTES (SCRATCH PAD)
+// ═══════════════════════════════════════════════════
+
+server.tool('cortex_add_note', 'Add scratch pad note', {
+  text: z.string(),
+  tags: z.array(z.string()).optional(),
+  session_id: z.string().optional(),
+}, async ({ text, tags, session_id }) => {
+  const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
+  return { content: [{ type: 'text' as const, text: `Note saved (id: ${r.lastInsertRowid})` }] };
+});
+
+server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {
+  limit: z.number().optional().default(20),
+  search: z.string().optional(),
+}, async ({ limit, search }) => {
+  const db = getDb();
+  const notes = search
+    ? db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit)
+    : db.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
+  return { content: [{ type: 'text' as const, text: (notes as any[]).map(n => `[${n.id}] ${n.created_at.slice(0,10)}: ${n.text}`).join('\n') || 'No notes.' }] };
+});
+
+server.tool('cortex_delete_note', 'Delete note by id', {
+  id: z.number(),
+}, async ({ id }) => {
+  getDb().prepare(`DELETE FROM notes WHERE id=?`).run(id);
+  return { content: [{ type: 'text' as const, text: `Deleted note ${id}` }] };
+});
 
 // ═══════════════════════════════════════════════════
 // STARTUP

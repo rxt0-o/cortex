@@ -58,22 +58,34 @@ server.tool('cortex_search', 'Full-text search across all Cortex data: sessions,
     query: z.string(),
     limit: z.number().optional(),
 }, async ({ query, limit }) => {
-    getDb();
+    const db = getDb();
     const maxResults = limit ?? 10;
-    const results = [];
+    const lines = [];
     const sessionResults = sessions.searchSessions(query, maxResults);
     for (const s of sessionResults)
-        results.push({ type: 'session', data: s });
+        lines.push(`[SESSION] ${s.summary ?? s.id}`);
     const decisionResults = decisions.searchDecisions(query, maxResults);
     for (const d of decisionResults)
-        results.push({ type: 'decision', data: d });
+        lines.push(`[DECISION] ${d.title}`);
     const errorResults = errors.searchErrors(query, maxResults);
     for (const e of errorResults)
-        results.push({ type: 'error', data: e });
+        lines.push(`[ERROR] ${e.error_message}`);
     const learningResults = learnings.searchLearnings(query, maxResults);
     for (const l of learningResults)
-        results.push({ type: 'learning', data: l });
-    return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+        lines.push(`[LEARNING] ${l.anti_pattern}`);
+    try {
+        const noteResults = db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${query}%`, maxResults);
+        for (const n of noteResults)
+            lines.push(`[NOTE] ${n.text.slice(0, 120)}`);
+    }
+    catch { }
+    try {
+        const unfinishedResults = db.prepare(`SELECT * FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?`).all(`%${query}%`, maxResults);
+        for (const u of unfinishedResults)
+            lines.push(`[TODO] ${u.description}`);
+    }
+    catch { }
+    return { content: [{ type: 'text', text: lines.join('\n') || 'No results.' }] };
 });
 // ═══════════════════════════════════════════════════
 // CONTEXT
@@ -543,6 +555,48 @@ server.tool('cortex_import_git_history', 'Import git log history to populate Hot
     return {
         content: [{ type: 'text', text: JSON.stringify({ success: true, files_imported: imported, commits_analyzed: limit }, null, 2) }],
     };
+});
+server.tool('cortex_snooze', 'Schedule a future session reminder', {
+    description: z.string(),
+    until: z.string().describe('Relative 3d/1w or ISO date 2026-03-01'),
+    session_id: z.string().optional(),
+}, async ({ description, until, session_id }) => {
+    let d = new Date();
+    if (/^\d+d$/i.test(until))
+        d.setDate(d.getDate() + parseInt(until));
+    else if (/^\d+w$/i.test(until))
+        d.setDate(d.getDate() + parseInt(until) * 7);
+    else
+        d = new Date(until);
+    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until) VALUES (?,?,?,?,?)`).run(description, 'snoozed', 'medium', session_id ?? null, d.toISOString());
+    return { content: [{ type: 'text', text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
+});
+// ═══════════════════════════════════════════════════
+// NOTES (SCRATCH PAD)
+// ═══════════════════════════════════════════════════
+server.tool('cortex_add_note', 'Add scratch pad note', {
+    text: z.string(),
+    tags: z.array(z.string()).optional(),
+    session_id: z.string().optional(),
+}, async ({ text, tags, session_id }) => {
+    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
+    return { content: [{ type: 'text', text: `Note saved (id: ${r.lastInsertRowid})` }] };
+});
+server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {
+    limit: z.number().optional().default(20),
+    search: z.string().optional(),
+}, async ({ limit, search }) => {
+    const db = getDb();
+    const notes = search
+        ? db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit)
+        : db.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
+    return { content: [{ type: 'text', text: notes.map(n => `[${n.id}] ${n.created_at.slice(0, 10)}: ${n.text}`).join('\n') || 'No notes.' }] };
+});
+server.tool('cortex_delete_note', 'Delete note by id', {
+    id: z.number(),
+}, async ({ id }) => {
+    getDb().prepare(`DELETE FROM notes WHERE id=?`).run(id);
+    return { content: [{ type: 'text', text: `Deleted note ${id}` }] };
 });
 // ═══════════════════════════════════════════════════
 // STARTUP
