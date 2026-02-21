@@ -228,3 +228,13 @@ export function toJson(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return JSON.stringify(value);
 }
+
+export function ageLabel(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'unknown';
+  const d = (Date.now() - new Date(dateStr).getTime()) / 86400000;
+  if (d < 3) return 'fresh';
+  if (d < 14) return 'recent';
+  if (d < 90) return 'established';
+  if (d < 365) return 'legacy';
+  return 'ancient';
+}

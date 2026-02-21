@@ -31167,6 +31167,10 @@ server.tool("cortex_list_decisions", "List architectural decisions, optionally f
   const result = listDecisions({ category, limit });
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 });
+server.tool("cortex_mark_decision_reviewed", "Mark a decision as reviewed / still current (resets stale flag)", { id: external_exports3.number() }, async ({ id }) => {
+  getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(id);
+  return { content: [{ type: "text", text: `Decision ${id} marked as reviewed.` }] };
+});
 server.tool("cortex_add_error", "Record an error with optional root cause, fix, and prevention rule", {
   error_message: external_exports3.string(),
   root_cause: external_exports3.string().optional(),

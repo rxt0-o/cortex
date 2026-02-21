@@ -131,6 +131,11 @@ function main() {
     // 6. Health
     const health = db.prepare('SELECT score, trend FROM health_snapshots ORDER BY date DESC LIMIT 1').get();
 
+    // Stale decisions warning
+    let staleCount = 0;
+    try { staleCount = db.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get()?.c || 0; } catch {}
+    if (staleCount > 0) parts.push(`  STALE: ${staleCount} decisions >90 days — still current? (/cortex decisions)`);
+
     if (parts.length === 0) {
       // Still register the session even if no context to show
       db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, new Date().toISOString(), 'active');

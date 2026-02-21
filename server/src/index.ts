@@ -186,6 +186,16 @@ server.tool(
   }
 );
 
+server.tool(
+  'cortex_mark_decision_reviewed',
+  'Mark a decision as reviewed / still current (resets stale flag)',
+  { id: z.number() },
+  async ({ id }) => {
+    getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(id);
+    return { content: [{ type: 'text' as const, text: `Decision ${id} marked as reviewed.` }] };
+  }
+);
+
 // ═══════════════════════════════════════════════════
 // ERRORS
 // ═══════════════════════════════════════════════════
