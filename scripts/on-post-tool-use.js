@@ -5,6 +5,9 @@ import { readFileSync, existsSync, appendFileSync } from 'fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 
+// Loop Detector — tracks edits per file across hook invocations
+const _editTracker = new Map(); // key: filePath, value: { count, firstAt }
+
 function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
   const { tool_name, tool_input, session_id, cwd } = input;
@@ -100,6 +103,20 @@ function main() {
         }
       }
     }
+
+      // 6b. Loop detector: warn if same file edited 3+ times in 5 minutes
+      const now = Date.now();
+      const tracked = _editTracker.get(filePath) || { count: 0, firstAt: now };
+      tracked.count++;
+      _editTracker.set(filePath, tracked);
+      if (tracked.count >= 3 && (now - tracked.firstAt) < 5 * 60 * 1000) {
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse',
+            additionalContext: ,
+          },
+        }));
+      }
 
     // 7. Impact tracking: check if this file had a recent fix
     if (filePath && tool_name !== 'Bash') {

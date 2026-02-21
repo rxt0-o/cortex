@@ -92,6 +92,30 @@ function main() {
       }
     }
 
+    // 5. Passive file warnings (non-blocking context)
+    const targetFile = tool_input.file_path || '';
+    if (targetFile) {
+      const passiveCtx = [];
+      try {
+        const hf = db.prepare(`SELECT change_count FROM project_files WHERE path LIKE ?`).get(`%${targetFile}%`);
+        if (hf && hf.change_count > 10) passiveCtx.push(`HOT ZONE: "${targetFile}" changed ${hf.change_count}x — high churn file`);
+      } catch {}
+      try {
+        const recentErr = db.prepare(`SELECT error_message FROM errors WHERE files_involved LIKE ? AND last_seen > datetime('now','-7 days') LIMIT 1`).get(`%${targetFile}%`);
+        if (recentErr) passiveCtx.push(`RECENT ERROR in this file (last 7d): ${recentErr.error_message}`);
+      } catch {}
+      try {
+        const dec = db.prepare(`SELECT title FROM decisions WHERE files_affected LIKE ? ORDER BY created_at DESC LIMIT 1`).get(`%${targetFile}%`);
+        if (dec) passiveCtx.push(`DECISION for this file: ${dec.title}`);
+      } catch {}
+      if (passiveCtx.length > 0) {
+        const existing = warnings.map(w => w.message).join(' ');
+        for (const p of passiveCtx) {
+          if (!existing.includes(p)) warnings.push({ type: 'passive', severity: 'info', message: p });
+        }
+      }
+    }
+
     if (warnings.length === 0) process.exit(0);
 
     if (shouldBlock) {
