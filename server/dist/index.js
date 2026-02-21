@@ -603,6 +603,125 @@ server.tool('cortex_delete_note', 'Delete note by id', {
     return { content: [{ type: 'text', text: `Deleted note ${id}` }] };
 });
 // ═══════════════════════════════════════════════════
+// BLAME + TIME MACHINE + TIMELINE + FORGET + DEJA-VU
+// ═══════════════════════════════════════════════════
+server.tool('cortex_blame', 'Show full history for a file: diffs, errors, decisions', { file_path: z.string() }, async ({ file_path }) => {
+    const db = getDb();
+    const lines = [`=== History for ${file_path} ===`];
+    try {
+        const fileDiffs = db.prepare(`SELECT d.created_at, d.change_type, s.summary FROM diffs d LEFT JOIN sessions s ON s.id=d.session_id WHERE d.file_path LIKE ? ORDER BY d.created_at DESC LIMIT 10`).all(`%${file_path}%`);
+        if (fileDiffs.length > 0) {
+            lines.push('DIFFS:');
+            for (const d of fileDiffs)
+                lines.push(`  [${d.created_at?.slice(0, 10)}] ${d.change_type ?? 'modified'} — ${d.summary ?? ''}`);
+        }
+    }
+    catch { }
+    try {
+        const fileErrors = db.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE files_involved LIKE ? ORDER BY last_seen DESC LIMIT 5`).all(`%${file_path}%`);
+        if (fileErrors.length > 0) {
+            lines.push('ERRORS:');
+            for (const e of fileErrors)
+                lines.push(`  [${e.severity}] ${e.error_message}${e.fix_description ? ' → ' + e.fix_description : ''}`);
+        }
+    }
+    catch { }
+    try {
+        const fileDecisions = db.prepare(`SELECT title, category, created_at FROM decisions WHERE files_affected LIKE ? ORDER BY created_at DESC LIMIT 5`).all(`%${file_path}%`);
+        if (fileDecisions.length > 0) {
+            lines.push('DECISIONS:');
+            for (const d of fileDecisions)
+                lines.push(`  [${d.category}] ${d.title}`);
+        }
+    }
+    catch { }
+    return { content: [{ type: 'text', text: lines.join('\n') || 'No history found.' }] };
+});
+server.tool('cortex_compare_periods', 'Compare activity between two date ranges', {
+    from_a: z.string().describe('Start of period A (YYYY-MM-DD)'),
+    to_a: z.string().describe('End of period A (YYYY-MM-DD)'),
+    from_b: z.string().describe('Start of period B (YYYY-MM-DD)'),
+    to_b: z.string().describe('End of period B (YYYY-MM-DD)'),
+}, async ({ from_a, to_a, from_b, to_b }) => {
+    const db = getDb();
+    const count = (sql, ...p) => {
+        try {
+            return db.prepare(sql).get(...p)?.c ?? 0;
+        }
+        catch {
+            return 0;
+        }
+    };
+    const periodA = {
+        sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_a, to_a),
+        errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_a, to_a),
+        fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_a, to_a),
+        files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_a, to_a),
+    };
+    const periodB = {
+        sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_b, to_b),
+        errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_b, to_b),
+        fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_b, to_b),
+        files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_b, to_b),
+    };
+    return { content: [{ type: 'text', text: JSON.stringify({ periodA: { range: `${from_a} to ${to_a}`, ...periodA }, periodB: { range: `${from_b} to ${to_b}`, ...periodB } }, null, 2) }] };
+});
+server.tool('cortex_get_timeline', 'Get monthly activity timeline', { limit: z.number().optional().default(12) }, async ({ limit }) => {
+    const db = getDb();
+    try {
+        const rows = db.prepare(`
+        SELECT strftime('%Y-%m', started_at) as month, COUNT(*) as sessions,
+               GROUP_CONCAT(SUBSTR(summary, 1, 60), ' | ') as summaries
+        FROM sessions WHERE summary IS NOT NULL
+        GROUP BY month ORDER BY month DESC LIMIT ?
+      `).all(limit);
+        const lines = rows.map(r => `[${r.month}] ${r.sessions} sessions — ${r.summaries?.slice(0, 200) ?? ''}`);
+        return { content: [{ type: 'text', text: lines.join('\n') || 'No timeline data.' }] };
+    }
+    catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${e}` }] };
+    }
+});
+server.tool('cortex_forget', 'Archive (soft-delete) decisions, errors, and learnings matching a topic', { topic: z.string().describe('Keyword or phrase to match against') }, async ({ topic }) => {
+    const db = getDb();
+    const pat = `%${topic}%`;
+    let archived = 0;
+    try {
+        const r = db.prepare(`UPDATE decisions SET archived=1 WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1`).run(pat, pat);
+        archived += Number(r.changes);
+    }
+    catch { }
+    try {
+        const r = db.prepare(`UPDATE errors SET archived=1 WHERE (error_message LIKE ? OR root_cause LIKE ?) AND archived!=1`).run(pat, pat);
+        archived += Number(r.changes);
+    }
+    catch { }
+    try {
+        const r = db.prepare(`UPDATE learnings SET archived=1 WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1`).run(pat, pat);
+        archived += Number(r.changes);
+    }
+    catch { }
+    return { content: [{ type: 'text', text: `Archived ${archived} item(s) matching "${topic}".` }] };
+});
+server.tool('cortex_dejavu', 'Check if a task looks similar to past sessions (deja-vu detection)', { task_description: z.string() }, async ({ task_description }) => {
+    const db = getDb();
+    // Extract keywords (words > 4 chars)
+    const keywords = task_description.split(/\s+/).filter(w => w.length > 4).slice(0, 8);
+    if (keywords.length === 0)
+        return { content: [{ type: 'text', text: 'No keywords to match.' }] };
+    const lines = [];
+    for (const kw of keywords) {
+        try {
+            const matches = db.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? AND status='completed' ORDER BY started_at DESC LIMIT 2`).all(`%${kw}%`);
+            for (const m of matches)
+                lines.push(`[${m.started_at?.slice(0, 10)}] ${m.summary}`);
+        }
+        catch { }
+    }
+    const unique = [...new Set(lines)].slice(0, 10);
+    return { content: [{ type: 'text', text: unique.length > 0 ? `Deja-vu matches:\n${unique.join('\n')}` : 'No similar sessions found.' }] };
+});
+// ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════
 async function main() {
