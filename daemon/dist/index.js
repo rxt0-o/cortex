@@ -4,6 +4,7 @@ import { EventQueue } from './queue.js';
 import { runArchitectAgent } from './agents/architect.js';
 import { runContextAgent } from './agents/context.js';
 import { runLearnerAgent } from './agents/learner.js';
+import { runDriftDetectorAgent } from './agents/drift-detector.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf('--project');
@@ -56,6 +57,9 @@ setInterval(() => {
         else if (event.type === 'session_end') {
             runLearnerAgent(projectPath, event.transcript_path).catch(err => {
                 process.stderr.write(`[cortex-daemon] Learner error: ${err}\n`);
+            });
+            runDriftDetectorAgent(projectPath).catch(err => {
+                process.stderr.write(`[cortex-daemon] DriftDetector error: ${err}\n`);
             });
             processed.push(event);
         }
