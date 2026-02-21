@@ -1008,6 +1008,273 @@ server.tool(
   }
 );
 
+
+// ═══════════════════════════════════════════════════
+// BRAIN SNAPSHOT
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_snapshot',
+  'Get a concise brain snapshot — top state, intents, mood, drift, anchors',
+  {},
+  async () => {
+    const db = getDb();
+    const md: string[] = [`# Brain Snapshot — ${new Date().toISOString().slice(0,16).replace('T', ' ')}`, ''];
+
+    // Mood
+    try {
+      const moodSessions = db.prepare(`SELECT mood_score FROM sessions WHERE mood_score IS NOT NULL ORDER BY started_at DESC LIMIT 7`).all() as any[];
+      if (moodSessions.length > 0) {
+        const avg = moodSessions.reduce((s: number, r: any) => s + r.mood_score, 0) / moodSessions.length;
+        md.push(`**Mood:** ${avg >= 4 ? 'positive' : avg >= 3 ? 'neutral' : 'negative'} (${avg.toFixed(1)}/5)`);
+      }
+    } catch {}
+
+    // Open items
+    try {
+      const open = db.prepare(`SELECT description, priority FROM unfinished WHERE resolved_at IS NULL ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END LIMIT 5`).all() as any[];
+      if (open.length > 0) {
+        md.push('');
+        md.push(`## Open Items (${open.length})`);
+        for (const u of open) md.push(`- [${u.priority}] ${u.description}`);
+      }
+    } catch {}
+
+    // Active intents
+    try {
+      const intents = db.prepare(`SELECT description FROM unfinished WHERE context='intent' AND resolved_at IS NULL LIMIT 3`).all() as any[];
+      if (intents.length > 0) {
+        md.push('');
+        md.push('## Intents');
+        for (const i of intents) md.push(`- ${i.description.replace('[INTENT] ', '')}`);
+      }
+    } catch {}
+
+    // Attention anchors
+    try {
+      const anchors = db.prepare(`SELECT topic, priority FROM attention_anchors ORDER BY priority DESC LIMIT 5`).all() as any[];
+      if (anchors.length > 0) {
+        md.push('');
+        md.push('## Attention Anchors');
+        for (const a of anchors) md.push(`- ${a.topic} (p${a.priority})`);
+      }
+    } catch {}
+
+    // Drift items
+    try {
+      const drift = db.prepare(`SELECT description FROM unfinished WHERE description LIKE '[DRIFT]%' AND resolved_at IS NULL LIMIT 3`).all() as any[];
+      if (drift.length > 0) {
+        md.push('');
+        md.push('## Drift Warnings');
+        for (const d of drift) md.push(`- ${d.description}`);
+      }
+    } catch {}
+
+    // Stale decisions
+    try {
+      const stale = db.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get() as any;
+      if (stale?.c > 0) {
+        md.push('');
+        md.push(`## Stale Decisions: ${stale.c} (>90 days old — review needed)`);
+      }
+    } catch {}
+
+    // Last 3 sessions
+    try {
+      const recent = db.prepare(`SELECT started_at, summary FROM sessions WHERE status='completed' AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 3`).all() as any[];
+      if (recent.length > 0) {
+        md.push('');
+        md.push('## Recent Sessions');
+        for (const s of recent) md.push(`- [${s.started_at?.slice(0,10)}] ${s.summary}`);
+      }
+    } catch {}
+
+    return { content: [{ type: 'text' as const, text: md.join('\n') }] };
+  }
+);
+
+// ═══════════════════════════════════════════════════
+// USER PROFILE + EXPORT
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_update_profile',
+  'Update user profile (name, role, working style, expertise, communication preference)',
+  {
+    name: z.string().optional(),
+    role: z.string().optional(),
+    working_style: z.string().optional(),
+    expertise_areas: z.string().optional(),
+    communication_preference: z.string().optional(),
+  },
+  async (input) => {
+    const db = getDb();
+    // Upsert with id=1
+    db.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, communication_preference, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        name=COALESCE(excluded.name, name),
+        role=COALESCE(excluded.role, role),
+        working_style=COALESCE(excluded.working_style, working_style),
+        expertise_areas=COALESCE(excluded.expertise_areas, expertise_areas),
+        communication_preference=COALESCE(excluded.communication_preference, communication_preference),
+        updated_at=datetime('now')`
+    ).run(input.name ?? null, input.role ?? null, input.working_style ?? null, input.expertise_areas ?? null, input.communication_preference ?? null);
+    return { content: [{ type: 'text' as const, text: 'Profile updated.' }] };
+  }
+);
+
+server.tool(
+  'cortex_get_profile',
+  'Get the user profile',
+  {},
+  async () => {
+    const db = getDb();
+    try {
+      const profile = db.prepare(`SELECT * FROM user_profile WHERE id=1`).get() as any;
+      if (!profile) return { content: [{ type: 'text' as const, text: 'No profile set. Use cortex_update_profile to create one.' }] };
+      const lines = [
+        `Name: ${profile.name ?? '(not set)'}`,
+        `Role: ${profile.role ?? '(not set)'}`,
+        `Working Style: ${profile.working_style ?? '(not set)'}`,
+        `Expertise: ${profile.expertise_areas ?? '(not set)'}`,
+        `Communication: ${profile.communication_preference ?? '(not set)'}`,
+        `Updated: ${profile.updated_at?.slice(0,10) ?? 'never'}`,
+      ];
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+    }
+  }
+);
+
+server.tool(
+  'cortex_export',
+  'Export brain data as JSON or Markdown',
+  { format: z.enum(['json', 'markdown']).optional().default('markdown') },
+  async ({ format }) => {
+    const db = getDb();
+    try {
+      const data = {
+        exported_at: new Date().toISOString(),
+        profile: db.prepare(`SELECT * FROM user_profile WHERE id=1`).get() ?? {},
+        sessions: db.prepare(`SELECT id, started_at, summary, tags, emotional_tone, mood_score FROM sessions WHERE status='completed' ORDER BY started_at DESC LIMIT 50`).all(),
+        decisions: db.prepare(`SELECT title, category, reasoning, created_at FROM decisions WHERE archived!=1 ORDER BY created_at DESC LIMIT 30`).all(),
+        learnings: db.prepare(`SELECT anti_pattern, correct_pattern, severity, occurrences FROM learnings WHERE archived!=1 ORDER BY occurrences DESC LIMIT 50`).all(),
+        errors: db.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE archived!=1 ORDER BY occurrences DESC LIMIT 30`).all(),
+        unfinished: db.prepare(`SELECT description, priority, created_at FROM unfinished WHERE resolved_at IS NULL ORDER BY created_at DESC`).all(),
+        notes: ((): any[] => { try { return db.prepare(`SELECT text, tags, created_at FROM notes ORDER BY created_at DESC LIMIT 30`).all() as any[]; } catch { return []; } })(),
+      };
+
+      if (format === 'json') {
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      }
+
+      // Markdown format
+      const md: string[] = [`# Brain Export — ${data.exported_at.slice(0,10)}`, ''];
+      md.push(`## Profile`);
+      const p = data.profile as any;
+      if (p?.name) md.push(`**${p.name}** · ${p.role ?? ''} · ${p.working_style ?? ''}`);
+      md.push('');
+      md.push(`## Open Items (${(data.unfinished as any[]).length})`);
+      for (const u of data.unfinished as any[]) md.push(`- [${u.priority}] ${u.description}`);
+      md.push('');
+      md.push(`## Key Learnings (${(data.learnings as any[]).length})`);
+      for (const l of data.learnings as any[]) md.push(`- **${l.anti_pattern}** → ${l.correct_pattern} (${l.occurrences}x)`);
+      md.push('');
+      md.push(`## Recent Sessions (${(data.sessions as any[]).length})`);
+      for (const s of data.sessions as any[]) md.push(`- [${s.started_at?.slice(0,10)}] ${s.summary ?? ''}`);
+
+      return { content: [{ type: 'text' as const, text: md.join('\n') }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: `Export error: ${e}` }] };
+    }
+  }
+);
+// ═══════════════════════════════════════════════════
+// ATTENTION ANCHORS
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_add_anchor',
+  'Add an attention anchor — a topic that always gets priority context',
+  { topic: z.string(), priority: z.number().optional().default(5) },
+  async ({ topic, priority }) => {
+    const db = getDb();
+    try {
+      db.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
+      return { content: [{ type: 'text' as const, text: `Anchor added: "${topic}" (priority ${priority})` }] };
+    } catch {
+      return { content: [{ type: 'text' as const, text: `Anchor "${topic}" already exists or could not be added.` }] };
+    }
+  }
+);
+
+server.tool(
+  'cortex_remove_anchor',
+  'Remove an attention anchor by topic',
+  { topic: z.string() },
+  async ({ topic }) => {
+    const db = getDb();
+    const r = db.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
+    return { content: [{ type: 'text' as const, text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
+  }
+);
+
+server.tool(
+  'cortex_list_anchors',
+  'List all attention anchors',
+  {},
+  async () => {
+    const db = getDb();
+    try {
+      const anchors = db.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all() as any[];
+      if (anchors.length === 0) return { content: [{ type: 'text' as const, text: 'No attention anchors set.' }] };
+      const lines = anchors.map(a => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0,10) ?? 'never'})`);
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+    }
+  }
+);
+
+
+// ═══════════════════════════════════════════════════
+// MOOD
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_get_mood',
+  'Get current system mood based on rolling average of last 7 sessions',
+  {},
+  async () => {
+    const db = getDb();
+    try {
+      const sessions = db.prepare(`
+        SELECT emotional_tone, mood_score, started_at FROM sessions
+        WHERE mood_score IS NOT NULL AND status='completed'
+        ORDER BY started_at DESC LIMIT 7
+      `).all() as any[];
+
+      if (sessions.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No mood data yet. Mood scoring runs after sessions complete.' }] };
+      }
+
+      const avg = sessions.reduce((s, r) => s + (r.mood_score ?? 3), 0) / sessions.length;
+      const mood = avg >= 4 ? 'positive' : avg >= 3 ? 'neutral' : 'negative';
+      const lines = [
+        `System Mood: ${mood} (avg ${avg.toFixed(1)}/5 over last ${sessions.length} sessions)`,
+        '',
+        'Recent sessions:',
+        ...sessions.map(s => `  [${s.started_at?.slice(0,10)}] ${s.emotional_tone ?? 'unknown'} (${s.mood_score}/5)`),
+      ];
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+    }
+  }
+);
+
 // ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════

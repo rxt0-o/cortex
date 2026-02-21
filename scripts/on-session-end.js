@@ -123,6 +123,12 @@ async function main() {
       db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
     } catch {}
 
+    // Priority scoring: bump high-priority items that are overdue
+    try {
+      db.prepare(`UPDATE unfinished SET priority_score = COALESCE(priority_score, 50) + 5 WHERE resolved_at IS NULL AND created_at < datetime('now','-3 days') AND priority='high'`).run();
+      db.prepare(`UPDATE unfinished SET priority_score = COALESCE(priority_score, 50) + 2 WHERE resolved_at IS NULL AND created_at < datetime('now','-7 days') AND priority='medium'`).run();
+    } catch {}
+
     // Auto-Regex Generator (async, non-blocking, max 1x täglich)
     try {
       const { runAutoRegex } = await import('./auto-regex.js');
