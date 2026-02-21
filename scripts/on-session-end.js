@@ -16,6 +16,7 @@ async function main() {
     const toolCalls = [];
     const filesModified = new Set();
 
+    const userMessages = [];
     if (transcript_path && existsSync(transcript_path)) {
       const rl = createInterface({ input: createReadStream(transcript_path, { encoding: 'utf-8' }), crlfDelay: Infinity });
       for await (const line of rl) {
@@ -27,6 +28,20 @@ async function main() {
               if (block.type === 'tool_use') {
                 toolCalls.push(block.name);
                 if (['Write', 'Edit'].includes(block.name) && block.input?.file_path) filesModified.add(block.input.file_path);
+              }
+            }
+          }
+          // User-Messages extrahieren für semantische Summary
+          if (entry.type === 'human' && Array.isArray(entry.content)) {
+            for (const block of entry.content) {
+              if (block.type === 'text' && block.text && block.text.length > 20) {
+                // Hook-injizierte Nachrichten filtern
+                if (!block.text.startsWith('-- Project Cortex') &&
+                    !block.text.startsWith('Cortex') &&
+                    !block.text.includes('hookSpecificOutput') &&
+                    !block.text.includes('SessionStart hook')) {
+                  userMessages.push(block.text.slice(0, 200));
+                }
               }
             }
           }
@@ -42,7 +57,17 @@ async function main() {
     if (fileList.length > 0) parts.push(`Files: ${fileList.slice(0, 10).join(', ')}${fileList.length > 10 ? ` (+${fileList.length - 10})` : ''}`);
     const actions = Object.entries(toolCounts).sort(([, a], [, b]) => b - a).map(([t, c]) => `${t}:${c}`).join(', ');
     if (actions) parts.push(`Actions: ${actions}`);
-    const summary = parts.join(' | ') || 'No significant activity';
+    let summary = parts.join(' | ') || 'No significant activity';
+    let sessionTags = [];
+
+    // Haiku-Agent für semantische Summary (nur wenn echte Arbeit geleistet)
+    if (fileList.length > 0 || toolCalls.length > 3) {
+      const aiResult = await buildTranscriptSummary(transcript_path, fileList, toolCounts);
+      if (aiResult?.summary) {
+        summary = aiResult.summary;
+        sessionTags = aiResult.tags;
+      }
+    }
     const keyChanges = JSON.stringify(fileList.slice(0, 20).map(f => ({ file: f, action: 'modified', description: '' })));
     const ts = new Date().toISOString();
 
@@ -50,11 +75,11 @@ async function main() {
     const startedAt = session?.started_at || ts;
     const dur = Math.round((Date.now() - new Date(startedAt).getTime()) / 1000);
 
-    db.prepare(`INSERT INTO sessions (id, started_at, ended_at, duration_seconds, summary, key_changes, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'completed')
+    db.prepare(`INSERT INTO sessions (id, started_at, ended_at, duration_seconds, summary, key_changes, status, tags)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
       ON CONFLICT(id) DO UPDATE SET ended_at=excluded.ended_at, duration_seconds=excluded.duration_seconds,
-        summary=excluded.summary, key_changes=excluded.key_changes, status='completed'`
-    ).run(session_id, startedAt, ts, dur, summary, keyChanges);
+        summary=excluded.summary, key_changes=excluded.key_changes, status='completed', tags=excluded.tags`
+    ).run(session_id, startedAt, ts, dur, summary, keyChanges, JSON.stringify(sessionTags));
 
     // Track files
     const fStmt = db.prepare(`INSERT INTO project_files (path, change_count, last_changed, last_changed_session) VALUES (?, 1, ?, ?)
@@ -90,6 +115,67 @@ async function main() {
     } catch { /* non-critical */ }
   } finally {
     db.close();
+  }
+}
+
+// Ruft claude CLI auf um eine semantische Summary zu erzeugen
+// Gibt null zurück wenn claude nicht verfügbar oder Timeout
+async function buildTranscriptSummary(transcriptPath, fileList, toolCounts) {
+  try {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    const filesStr = fileList.slice(0, 8).join(', ');
+    const toolStr = Object.entries(toolCounts)
+      .sort(([,a],[,b]) => b-a).slice(0, 5)
+      .map(([t,c]) => `${t}:${c}`).join(', ');
+
+    let userMessages = '';
+    try {
+      const { readFileSync } = await import('fs');
+      const lines = readFileSync(transcriptPath, 'utf-8').split('\n').filter(Boolean);
+      const msgs = [];
+      for (const line of lines) {
+        if (msgs.length >= 5) break;
+        try {
+          const e = JSON.parse(line);
+          if (e.role === 'user' && typeof e.content === 'string' && e.content.length > 10) {
+            msgs.push(e.content.slice(0, 120));
+          } else if (e.role === 'user' && Array.isArray(e.content)) {
+            const text = e.content.find(b => b.type === 'text')?.text;
+            if (text && text.length > 10) msgs.push(text.slice(0, 120));
+          }
+        } catch { /* skip */ }
+      }
+      userMessages = msgs.join(' | ');
+    } catch { /* optional */ }
+
+    const prompt = `Summarize this coding session in 1-2 sentences (English, concise, focus on WHAT was done and WHY):
+Files changed: ${filesStr || 'none'}
+Tools used: ${toolStr || 'none'}
+User requests: ${userMessages || 'unknown'}
+
+Reply with ONLY:
+SUMMARY: <1-2 sentence summary>
+TAGS: <comma-separated tags from: bugfix,feature,refactor,security,database,frontend,backend,docs,config>`;
+
+    const result = await execFileAsync('claude', [
+      '--model', 'claude-haiku-4-5-20251001',
+      '--max-tokens', '150',
+      '-p', prompt,
+    ], { timeout: 20000, encoding: 'utf-8' });
+
+    const output = result.stdout.trim();
+    const summaryMatch = output.match(/SUMMARY:\s*(.+)/);
+    const tagsMatch = output.match(/TAGS:\s*(.+)/);
+
+    return {
+      summary: summaryMatch?.[1]?.trim() ?? null,
+      tags: tagsMatch?.[1]?.split(',').map(t => t.trim()).filter(Boolean) ?? [],
+    };
+  } catch {
+    return null;
   }
 }
 

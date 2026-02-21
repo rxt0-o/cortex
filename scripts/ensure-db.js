@@ -7,7 +7,8 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT,
   duration_seconds INTEGER, summary TEXT, key_changes TEXT,
-  chain_id TEXT, chain_label TEXT, status TEXT DEFAULT 'active'
+  chain_id TEXT, chain_label TEXT, status TEXT DEFAULT 'active',
+  tags TEXT
 );
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT REFERENCES sessions(id),
@@ -63,6 +64,10 @@ CREATE TABLE IF NOT EXISTS unfinished (
 CREATE TABLE IF NOT EXISTS health_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE,
   score INTEGER NOT NULL, metrics TEXT NOT NULL, trend TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_errors_signature ON errors(error_signature);
