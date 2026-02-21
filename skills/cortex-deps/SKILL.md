@@ -1,5 +1,5 @@
 ---
-name: cortex-deps
+name: cortex:cortex-deps
 description: Show dependency tree and impact analysis for a file
 user_invocable: true
 argument: file_path

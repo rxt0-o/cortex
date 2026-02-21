@@ -1,5 +1,5 @@
 ---
-name: cortex-health
+name: cortex:cortex-health
 description: Show project health score with metrics and trend
 user_invocable: true
 ---

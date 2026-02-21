@@ -1,5 +1,5 @@
 ---
-name: cortex-conventions
+name: cortex:cortex-conventions
 description: Show active coding conventions with violation counts
 user_invocable: true
 argument: scope

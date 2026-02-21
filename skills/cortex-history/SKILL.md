@@ -1,5 +1,5 @@
 ---
-name: cortex-history
+name: cortex:cortex-history
 description: Show complete history for a file — sessions, diffs, errors
 user_invocable: true
 argument: file_path

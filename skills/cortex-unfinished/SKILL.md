@@ -1,5 +1,5 @@
 ---
-name: cortex-unfinished
+name: cortex:cortex-unfinished
 description: Show open/unresolved items — things started but not completed
 user_invocable: true
 ---

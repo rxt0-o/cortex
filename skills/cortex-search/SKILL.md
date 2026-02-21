@@ -1,5 +1,5 @@
 ---
-name: cortex-search
+name: cortex:cortex-search
 description: Search across all Cortex data — sessions, decisions, errors, learnings
 user_invocable: true
 argument: query

@@ -1,5 +1,5 @@
 ---
-name: cortex-map
+name: cortex:cortex-map
 description: Show project architecture map — modules, layers, files
 user_invocable: true
 argument: module

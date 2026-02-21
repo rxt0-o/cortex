@@ -1,5 +1,5 @@
 ---
-name: cortex-errors
+name: cortex:cortex-errors
 description: Show known errors with fixes and prevention rules
 user_invocable: true
 argument: file_or_severity

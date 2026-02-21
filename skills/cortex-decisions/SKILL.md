@@ -1,5 +1,5 @@
 ---
-name: cortex-decisions
+name: cortex:cortex-decisions
 description: Show architectural decisions with reasoning
 user_invocable: true
 argument: category_or_count
