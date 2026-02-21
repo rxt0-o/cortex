@@ -101,6 +101,18 @@ function main() {
       }
     }
 
+    // 7. Impact tracking: check if this file had a recent fix
+    if (filePath && tool_name !== 'Bash') {
+      try {
+        const recentFix = db.prepare(`SELECT e.fix_description, s.started_at FROM errors e LEFT JOIN sessions s ON s.id=e.session_id WHERE e.files_involved LIKE ? AND e.fix_description IS NOT NULL AND s.started_at > datetime('now','-7 days') ORDER BY s.started_at DESC LIMIT 1`).get(`%${filePath}%`);
+        if (recentFix) {
+          const daysAgo = Math.round((Date.now() - new Date(recentFix.started_at).getTime()) / 86400000);
+          const feedbackPath = join(cwd, '.claude', 'cortex-feedback.jsonl');
+          appendFileSync(feedbackPath, JSON.stringify({ file: filePath, message: `IMPACT: Fixed ${daysAgo}d ago: Is the fix holding?` }) + '\n', 'utf-8');
+        }
+      } catch {}
+    }
+
     // 6. Migration-Tracking (Gotcha #133)
     if (tool_name === 'Bash') {
       const cmd = tool_input?.command || '';

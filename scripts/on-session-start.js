@@ -129,6 +129,22 @@ function main() {
     }
 
     // 6. Health
+    // Weekly digest (Monday or 7+ days since last digest)
+    try {
+      const lastDigest = db.prepare(`SELECT value FROM meta WHERE key='last_weekly_digest'`).get()?.value;
+      const daysSince = lastDigest ? (Date.now() - new Date(lastDigest).getTime()) / 86400000 : 999;
+      if (new Date().getDay() === 1 || daysSince >= 7) {
+        const s7 = db.prepare(`SELECT COUNT(*) as c FROM sessions WHERE started_at > datetime('now','-7 days') AND status='completed'`).get()?.c || 0;
+        const f7 = db.prepare(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at > datetime('now','-7 days')`).get()?.c || 0;
+        const fix7 = db.prepare(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND session_id IN (SELECT id FROM sessions WHERE started_at > datetime('now','-7 days'))`).get()?.c || 0;
+        const crit = db.prepare(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NULL AND severity='critical' AND archived!=1`).get()?.c || 0;
+        parts.push('');
+        parts.push('WEEKLY DIGEST:');
+        parts.push(`  ${s7} sessions | ${f7} files | ${fix7} bugs fixed${crit > 0 ? ' | ' + crit + ' critical open' : ''}`);
+        db.prepare(`INSERT INTO meta (key,value) VALUES ('last_weekly_digest',datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run();
+      }
+    } catch {}
+
     const health = db.prepare('SELECT score, trend FROM health_snapshots ORDER BY date DESC LIMIT 1').get();
 
     // Stale decisions warning
