@@ -283,11 +283,22 @@ server.tool(
 server.tool(
   'cortex_update_map',
   'Re-scan the project and update the architecture map',
-  {},
-  async () => {
+  { root_path: z.string().optional() },
+  async ({ root_path }) => {
     getDb();
-    // Trigger a scan — this would be done by the import scanner
-    return { content: [{ type: 'text' as const, text: 'Map update triggered. Use PostToolUse hooks for automatic updates.' }] };
+    const result = projectMap.scanProject(root_path ?? process.cwd());
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+  }
+);
+
+server.tool(
+  'cortex_scan_project',
+  'Scan project filesystem and populate architecture map with all files, modules and dependencies',
+  { root_path: z.string().optional() },
+  async ({ root_path }) => {
+    getDb();
+    const result = projectMap.scanProject(root_path ?? process.cwd());
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, ...result }, null, 2) }] };
   }
 );
 

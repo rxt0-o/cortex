@@ -1,3 +1,6 @@
+/// <reference types="node" />
+import fs from 'fs';
+import path from 'path';
 import { getDb, now, toJson, parseJson, type SQLInputValue } from '../db.js';
 
 export interface ProjectModule {
@@ -202,15 +205,126 @@ export function inferFileType(filePath: string): string | null {
 
 export function inferModulePath(filePath: string): string | null {
   const normalized = filePath.replace(/\\/g, '/');
-  // Extract the directory up to the first meaningful boundary
   const parts = normalized.split('/');
-  // Look for common module boundaries
+
+  // AriseTools-spezifische Grenzen zuerst prüfen
+  const boundaries = ['frontend/src', 'backend/app', 'supabase/migrations'];
+  for (const boundary of boundaries) {
+    const boundaryParts = boundary.split('/');
+    for (let i = 0; i <= parts.length - boundaryParts.length; i++) {
+      if (boundaryParts.every((bp, j) => parts[i + j] === bp)) {
+        const moduleEnd = i + boundaryParts.length + 1;
+        if (moduleEnd <= parts.length) {
+          return parts.slice(0, moduleEnd).join('/');
+        }
+      }
+    }
+  }
+
+  // Generische Grenzen als Fallback
   for (let i = parts.length - 2; i >= 0; i--) {
     const dir = parts[i];
     if (['src', 'app', 'lib'].includes(dir)) {
       return parts.slice(0, i + 2).join('/');
     }
   }
-  // Fallback: parent directory
+
   return parts.slice(0, -1).join('/') || null;
+}
+
+const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.py', '.sql'];
+const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'dist', '__pycache__', '.claude', 'build', 'coverage']);
+
+export interface ScanResult {
+  scanned: number;
+  modules: number;
+  files: number;
+  dependencies: number;
+}
+
+export function scanProject(rootPath: string): ScanResult {
+  const db = getDb();
+  const allFiles = collectFiles(rootPath);
+  let depsCount = 0;
+
+  for (const filePath of allFiles) {
+    const relativePath = filePath.replace(/\\/g, '/');
+    const fileType = inferFileType(relativePath);
+    const modulePath = inferModulePath(relativePath);
+
+    if (modulePath) {
+      const moduleName = modulePath.split('/').pop() ?? modulePath;
+      const layer = inferLayer(relativePath);
+      upsertModule({ path: modulePath, name: moduleName, layer });
+      const mod = getModuleByPath(modulePath);
+      if (mod) {
+        upsertFile({ path: relativePath, module_id: mod.id, file_type: fileType ?? undefined });
+      }
+    } else {
+      upsertFile({ path: relativePath, file_type: fileType ?? undefined });
+    }
+
+    try {
+      const ext = path.extname(filePath).slice(1).toLowerCase();
+      if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const imports = extractImports(content, ext);
+        db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(relativePath);
+        const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
+        for (const imp of imports) {
+          stmt.run(relativePath, imp, 'static');
+          depsCount++;
+        }
+      }
+    } catch { /* Datei nicht lesbar — überspringen */ }
+  }
+
+  const moduleCount = (db.prepare('SELECT COUNT(*) as c FROM project_modules').get() as { c: number }).c;
+  const fileCount = (db.prepare('SELECT COUNT(*) as c FROM project_files').get() as { c: number }).c;
+
+  return { scanned: allFiles.length, modules: moduleCount, files: fileCount, dependencies: depsCount };
+}
+
+function collectFiles(dir: string): string[] {
+  const result: string[] = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (EXCLUDE_DIRS.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        result.push(...collectFiles(fullPath));
+      } else if (SCAN_EXTENSIONS.includes(path.extname(entry.name))) {
+        result.push(fullPath);
+      }
+    }
+  } catch { /* nicht lesbar */ }
+  return result;
+}
+
+function inferLayer(filePath: string): string {
+  const p = filePath.replace(/\\/g, '/').toLowerCase();
+  if (p.includes('frontend/')) return 'frontend';
+  if (p.includes('backend/')) return 'backend';
+  if (p.includes('supabase/')) return 'database';
+  if (p.includes('scripts/')) return 'tooling';
+  return 'other';
+}
+
+function extractImports(content: string, ext: string): string[] {
+  const imports: string[] = [];
+  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
+    const re = /import\s+(?:type\s+)?(?:\{[^}]*\}|\w+(?:\s*,\s*\{[^}]*\})?)\s+from\s+['"]([^'"]+)['"]/g;
+    let m;
+    while ((m = re.exec(content))) {
+      if (m[1].startsWith('.') || m[1].startsWith('/')) imports.push(m[1]);
+    }
+  } else if (ext === 'py') {
+    const re = /from\s+([\w.]+)\s+import/g;
+    let m;
+    while ((m = re.exec(content))) {
+      if (m[1].startsWith('app') || m[1].includes('.')) imports.push(m[1]);
+    }
+  }
+  return imports;
 }
