@@ -1378,6 +1378,54 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════
+// CROSS-PROJECT BRAIN
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_set_project',
+  'Set the active project name for context tagging',
+  { project: z.string() },
+  async ({ project }) => {
+    const db = getDb();
+    db.prepare(`INSERT INTO meta (key, value) VALUES ('active_project', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(project);
+    return { content: [{ type: 'text' as const, text: `Active project set to: "${project}"` }] };
+  }
+);
+
+server.tool(
+  'cortex_cross_project_search',
+  'Search across all projects in this Cortex DB',
+  { query: z.string(), limit: z.number().optional().default(10) },
+  async ({ query, limit }) => {
+    const db = getDb();
+    const pat = `%${query}%`;
+    const lines: string[] = [];
+
+    try {
+      const sessions = db.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?`).all(pat, limit) as any[];
+      for (const s of sessions) lines.push(`[SESSION] ${s.started_at?.slice(0,10)}: ${s.summary}`);
+    } catch {}
+
+    try {
+      const decisions = db.prepare(`SELECT title, category FROM decisions WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit) as any[];
+      for (const d of decisions) lines.push(`[DECISION/${d.category}] ${d.title}`);
+    } catch {}
+
+    try {
+      const learnings = db.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit) as any[];
+      for (const l of learnings) lines.push(`[LEARNING] ${l.anti_pattern} → ${l.correct_pattern}`);
+    } catch {}
+
+    try {
+      const notes = db.prepare(`SELECT text, project, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(pat, limit) as any[];
+      for (const n of notes) lines.push(`[NOTE${n.project ? '/' + n.project : ''}] ${n.text.slice(0, 100)}`);
+    } catch {}
+
+    return { content: [{ type: 'text' as const, text: lines.join('\n') || 'No cross-project results found.' }] };
+  }
+);
+
+// ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════
 

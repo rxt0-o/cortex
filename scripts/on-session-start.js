@@ -44,6 +44,10 @@ function main() {
 
   const db = openDb(cwd);
 
+  // Active project from meta (optional)
+  let activeProject = '';
+  try { activeProject = db.prepare(`SELECT value FROM meta WHERE key='active_project'`).get()?.value || ''; } catch {}
+
   try {
     const parts = [];
 
@@ -191,7 +195,7 @@ function main() {
     else if (hour >= 17) parts.push('  MODE: Evening — review mode active');
 
     const context = [
-      `-- Project Cortex${healthStr} --`,
+      `-- Project Cortex${activeProject ? ` [${activeProject}]` : ''}${healthStr} --`,
       `Branch: ${branch}`,
       '', ...parts, '',
       '/cortex-search, /cortex-map, /cortex-deps for details',

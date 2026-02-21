@@ -111,6 +111,8 @@ export function openDb(cwd) {
     `CREATE TABLE IF NOT EXISTS attention_anchors (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, priority INTEGER DEFAULT 5, created_at TEXT DEFAULT (datetime('now')), last_touched TEXT)`,
     `ALTER TABLE sessions ADD COLUMN emotional_tone TEXT`,
     `ALTER TABLE sessions ADD COLUMN mood_score INTEGER`,
+    `ALTER TABLE notes ADD COLUMN project TEXT`,
+    `ALTER TABLE unfinished ADD COLUMN project TEXT`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 

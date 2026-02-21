@@ -31986,6 +31986,41 @@ server.tool("cortex_onboard", "Run first-time onboarding: set up user profile an
   ].filter((l) => l !== "");
   return { content: [{ type: "text", text: lines.join("\n") }] };
 });
+server.tool("cortex_set_project", "Set the active project name for context tagging", { project: external_exports3.string() }, async ({ project }) => {
+  const db2 = getDb();
+  db2.prepare(`INSERT INTO meta (key, value) VALUES ('active_project', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(project);
+  return { content: [{ type: "text", text: `Active project set to: "${project}"` }] };
+});
+server.tool("cortex_cross_project_search", "Search across all projects in this Cortex DB", { query: external_exports3.string(), limit: external_exports3.number().optional().default(10) }, async ({ query, limit }) => {
+  const db2 = getDb();
+  const pat = `%${query}%`;
+  const lines = [];
+  try {
+    const sessions = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?`).all(pat, limit);
+    for (const s of sessions)
+      lines.push(`[SESSION] ${s.started_at?.slice(0, 10)}: ${s.summary}`);
+  } catch {
+  }
+  try {
+    const decisions = db2.prepare(`SELECT title, category FROM decisions WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
+    for (const d of decisions)
+      lines.push(`[DECISION/${d.category}] ${d.title}`);
+  } catch {
+  }
+  try {
+    const learnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
+    for (const l of learnings)
+      lines.push(`[LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
+  } catch {
+  }
+  try {
+    const notes = db2.prepare(`SELECT text, project, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(pat, limit);
+    for (const n of notes)
+      lines.push(`[NOTE${n.project ? "/" + n.project : ""}] ${n.text.slice(0, 100)}`);
+  } catch {
+  }
+  return { content: [{ type: "text", text: lines.join("\n") || "No cross-project results found." }] };
+});
 async function main() {
   getDb();
   const transport = new StdioServerTransport();
