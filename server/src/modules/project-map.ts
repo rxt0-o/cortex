@@ -233,7 +233,10 @@ export function inferModulePath(filePath: string): string | null {
 }
 
 const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.py', '.sql'];
-const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'dist', '__pycache__', '.claude', 'build', 'coverage']);
+const EXCLUDE_DIRS = new Set([
+  'node_modules', '.git', 'dist', '__pycache__', '.claude',
+  'build', 'coverage', 'venv', '.venv', '.mypy_cache', '.pytest_cache', '.tox',
+]);
 
 export interface ScanResult {
   scanned: number;
@@ -247,36 +250,44 @@ export function scanProject(rootPath: string): ScanResult {
   const allFiles = collectFiles(rootPath);
   let depsCount = 0;
 
-  for (const filePath of allFiles) {
-    const relativePath = filePath.replace(/\\/g, '/');
-    const fileType = inferFileType(relativePath);
-    const modulePath = inferModulePath(relativePath);
+  // Alles in einer Transaktion für Atomizität und Performance
+  db.exec('BEGIN');
+  try {
+    for (const filePath of allFiles) {
+      const relativePath = filePath.replace(/\\/g, '/');
+      const fileType = inferFileType(relativePath);
+      const modulePath = inferModulePath(relativePath);
 
-    if (modulePath) {
-      const moduleName = modulePath.split('/').pop() ?? modulePath;
-      const layer = inferLayer(relativePath);
-      upsertModule({ path: modulePath, name: moduleName, layer });
-      const mod = getModuleByPath(modulePath);
-      if (mod) {
-        upsertFile({ path: relativePath, module_id: mod.id, file_type: fileType ?? undefined });
-      }
-    } else {
-      upsertFile({ path: relativePath, file_type: fileType ?? undefined });
-    }
-
-    try {
-      const ext = path.extname(filePath).slice(1).toLowerCase();
-      if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext)) {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const imports = extractImports(content, ext);
-        db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(relativePath);
-        const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
-        for (const imp of imports) {
-          stmt.run(relativePath, imp, 'static');
-          depsCount++;
+      if (modulePath) {
+        const moduleName = modulePath.split('/').pop() ?? modulePath;
+        const layer = inferLayer(relativePath);
+        upsertModule({ path: modulePath, name: moduleName, layer });
+        const mod = getModuleByPath(modulePath);
+        if (mod) {
+          upsertFile({ path: relativePath, module_id: mod.id, file_type: fileType ?? undefined });
         }
+      } else {
+        upsertFile({ path: relativePath, file_type: fileType ?? undefined });
       }
-    } catch { /* Datei nicht lesbar — überspringen */ }
+
+      try {
+        const ext = path.extname(filePath).slice(1).toLowerCase();
+        if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext)) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const imports = extractImports(content, ext);
+          db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(relativePath);
+          const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
+          for (const imp of imports) {
+            stmt.run(relativePath, imp, 'static');
+            depsCount++;
+          }
+        }
+      } catch { /* Datei nicht lesbar — überspringen */ }
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 
   const moduleCount = (db.prepare('SELECT COUNT(*) as c FROM project_modules').get() as { c: number }).c;
