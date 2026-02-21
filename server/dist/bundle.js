@@ -30369,6 +30369,21 @@ function searchDecisions(query, limit = 10) {
     files_affected: parseJson(row.files_affected)
   }));
 }
+function runDecisionsPruning() {
+  const db2 = getDb();
+  const result = db2.prepare(`
+    UPDATE decisions
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND superseded_by IS NULL
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { decisions_archived: Number(result.changes) };
+}
 function getDecisionsForFile(filePath) {
   const db2 = getDb();
   const rows = db2.prepare(`
@@ -30524,6 +30539,20 @@ function updateError(input) {
   db2.prepare(`UPDATE errors SET ${sets.join(", ")} WHERE id = ?`).run(...values);
   return getError(input.id);
 }
+function runErrorsPruning() {
+  const db2 = getDb();
+  const result = db2.prepare(`
+    UPDATE errors
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND (
+        (first_seen < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (first_seen < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { errors_archived: Number(result.changes) };
+}
 function getPreventionRules() {
   const db2 = getDb();
   return db2.prepare(`
@@ -30656,6 +30685,21 @@ function checkContentAgainstLearnings(content) {
     }
   }
   return matches;
+}
+function runLearningsPruning() {
+  const db2 = getDb();
+  const result = db2.prepare(`
+    UPDATE learnings
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND auto_block = 0
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { learnings_archived: Number(result.changes) };
 }
 
 // dist/modules/unfinished.js
@@ -31096,6 +31140,16 @@ function getHealthHistory(limit = 30) {
 }
 
 // dist/index.js
+function runAllPruning() {
+  const d = runDecisionsPruning();
+  const l = runLearningsPruning();
+  const e = runErrorsPruning();
+  return {
+    decisions_archived: d.decisions_archived,
+    learnings_archived: l.learnings_archived,
+    errors_archived: e.errors_archived
+  };
+}
 var server = new McpServer({
   name: "project-cortex",
   version: "0.1.0"
@@ -31112,6 +31166,12 @@ server.tool("cortex_save_session", "Save or update a session with summary, chang
 }, async ({ session_id, summary, key_changes, status }) => {
   getDb();
   createSession({ id: session_id });
+  if (!status || status === "active") {
+    try {
+      runAllPruning();
+    } catch {
+    }
+  }
   const session = updateSession(session_id, {
     summary,
     key_changes,
@@ -31131,6 +31191,45 @@ server.tool("cortex_list_sessions", "List recent sessions with summaries", {
     result = result.filter((s) => s.tags?.includes(tag));
   }
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+});
+server.tool("cortex_run_pruning", "Manually run Ebbinghaus pruning \u2014 archives unused decisions/learnings/errors. Runs automatically on session start.", {}, async () => {
+  getDb();
+  const result = runAllPruning();
+  const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        archived: result,
+        total_archived: total,
+        message: total > 0 ? `${total} item(s) archived based on Ebbinghaus forgetting curve.` : "Nothing to archive -- all items are fresh or recently accessed."
+      }, null, 2)
+    }]
+  };
+});
+server.tool("cortex_get_access_stats", "Show top accessed decisions, learnings and errors -- what gets used most", {}, async () => {
+  const db2 = getDb();
+  const topDecisions = db2.prepare(`
+      SELECT id, title, category, access_count, last_accessed
+      FROM decisions WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+  const topLearnings = db2.prepare(`
+      SELECT id, anti_pattern, severity, access_count, last_accessed
+      FROM learnings WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+  const topErrors = db2.prepare(`
+      SELECT id, error_message, severity, access_count, last_accessed
+      FROM errors WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2)
+    }]
+  };
 });
 server.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings", {
   query: external_exports3.string(),
@@ -31817,12 +31916,92 @@ server.tool("cortex_snapshot", "Get a concise brain snapshot \u2014 top state, i
   } catch {
   }
   try {
-    const recent = db2.prepare(`SELECT started_at, summary FROM sessions WHERE status='completed' AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 3`).all();
+    const recent = db2.prepare(`
+        SELECT id, started_at, summary, key_changes FROM sessions
+        WHERE status='completed' AND summary IS NOT NULL
+        ORDER BY started_at DESC LIMIT 10
+      `).all();
     if (recent.length > 0) {
       md.push("");
       md.push("## Recent Sessions");
-      for (const s of recent)
-        md.push(`- [${s.started_at?.slice(0, 10)}] ${s.summary}`);
+      for (let i = 0; i < recent.length; i++) {
+        const s = recent[i];
+        const date5 = s.started_at?.slice(0, 10) ?? "?";
+        if (i < 3) {
+          md.push(`- [${date5}] ${s.summary}`);
+          if (s.key_changes) {
+            try {
+              const changes = JSON.parse(s.key_changes);
+              for (const c of changes.slice(0, 3)) {
+                md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
+              }
+            } catch {
+            }
+          }
+        } else {
+          const summary = s.summary ?? "";
+          md.push(`- [${date5}] ${summary.slice(0, 80)}${summary.length > 80 ? "..." : ""}`);
+        }
+      }
+    }
+  } catch {
+  }
+  try {
+    const recentDecisions = db2.prepare(`
+        SELECT id, title, category, reasoning FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all();
+    const olderDecisionsCount = db2.prepare(`
+        SELECT COUNT(*) as c FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get()?.c ?? 0;
+    if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
+      md.push("");
+      md.push("## Decisions");
+      for (const d of recentDecisions) {
+        const r = d.reasoning ?? "";
+        md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? "..." : ""}`);
+      }
+      if (olderDecisionsCount > 0) {
+        md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
+      }
+    }
+  } catch {
+  }
+  try {
+    const autoBlocks = db2.prepare(`
+        SELECT anti_pattern, correct_pattern FROM learnings
+        WHERE auto_block = 1 AND archived_at IS NULL
+      `).all();
+    const recentLearnings = db2.prepare(`
+        SELECT anti_pattern, correct_pattern, severity FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all();
+    const olderLearningsCount = db2.prepare(`
+        SELECT COUNT(*) as c FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get()?.c ?? 0;
+    if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
+      md.push("");
+      md.push("## Learnings");
+      if (autoBlocks.length > 0) {
+        md.push("**Auto-Block Rules:**");
+        for (const l of autoBlocks) {
+          md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
+        }
+      }
+      for (const l of recentLearnings) {
+        md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
+      }
+      if (olderLearningsCount > 0) {
+        md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
+      }
     }
   } catch {
   }

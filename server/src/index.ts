@@ -13,6 +13,17 @@ import * as diffs from './modules/diffs.js';
 import * as conventions from './modules/conventions.js';
 import * as health from './modules/health.js';
 
+function runAllPruning(): { decisions_archived: number; learnings_archived: number; errors_archived: number } {
+  const d = decisions.runDecisionsPruning();
+  const l = learnings.runLearningsPruning();
+  const e = errors.runErrorsPruning();
+  return {
+    decisions_archived: d.decisions_archived,
+    learnings_archived: l.learnings_archived,
+    errors_archived: e.errors_archived,
+  };
+}
+
 const server = new McpServer({
   name: 'project-cortex',
   version: '0.1.0',
@@ -38,6 +49,10 @@ server.tool(
   async ({ session_id, summary, key_changes, status }) => {
     getDb();
     sessions.createSession({ id: session_id });
+    // Auto-pruning beim Session-Start (Ebbinghaus-Forgetting-Curve)
+    if (!status || status === 'active') {
+      try { runAllPruning(); } catch { /* Pruning-Fehler blockieren Session-Start nicht */ }
+    }
     const session = sessions.updateSession(session_id, {
       summary,
       key_changes: key_changes as sessions.KeyChange[],
@@ -63,6 +78,62 @@ server.tool(
       result = result.filter(s => s.tags?.includes(tag));
     }
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'cortex_run_pruning',
+  'Manually run Ebbinghaus pruning — archives unused decisions/learnings/errors. Runs automatically on session start.',
+  {},
+  async () => {
+    getDb();
+    const result = runAllPruning();
+    const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
+    return {
+      content: [{
+        type: 'text' as const,
+        text: JSON.stringify({
+          archived: result,
+          total_archived: total,
+          message: total > 0
+            ? `${total} item(s) archived based on Ebbinghaus forgetting curve.`
+            : 'Nothing to archive -- all items are fresh or recently accessed.',
+        }, null, 2),
+      }],
+    };
+  }
+);
+
+server.tool(
+  'cortex_get_access_stats',
+  'Show top accessed decisions, learnings and errors -- what gets used most',
+  {},
+  async () => {
+    const db = getDb();
+    const topDecisions = db.prepare(`
+      SELECT id, title, category, access_count, last_accessed
+      FROM decisions WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all() as any[];
+
+    const topLearnings = db.prepare(`
+      SELECT id, anti_pattern, severity, access_count, last_accessed
+      FROM learnings WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all() as any[];
+
+    const topErrors = db.prepare(`
+      SELECT id, error_message, severity, access_count, last_accessed
+      FROM errors WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all() as any[];
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2),
+      }],
+    };
   }
 );
 
@@ -1079,13 +1150,101 @@ server.tool(
       }
     } catch {}
 
-    // Last 3 sessions
+    // Recency-Gradient: letzte 3 Sessions vollstaendig, aeltere komprimiert
     try {
-      const recent = db.prepare(`SELECT started_at, summary FROM sessions WHERE status='completed' AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 3`).all() as any[];
+      const recent = db.prepare(`
+        SELECT id, started_at, summary, key_changes FROM sessions
+        WHERE status='completed' AND summary IS NOT NULL
+        ORDER BY started_at DESC LIMIT 10
+      `).all() as any[];
+
       if (recent.length > 0) {
         md.push('');
         md.push('## Recent Sessions');
-        for (const s of recent) md.push(`- [${s.started_at?.slice(0,10)}] ${s.summary}`);
+        for (let i = 0; i < recent.length; i++) {
+          const s = recent[i];
+          const date = s.started_at?.slice(0, 10) ?? '?';
+          if (i < 3) {
+            md.push(`- [${date}] ${s.summary}`);
+            if (s.key_changes) {
+              try {
+                const changes = JSON.parse(s.key_changes) as Array<{ file: string; action: string; description: string }>;
+                for (const c of changes.slice(0, 3)) {
+                  md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
+                }
+              } catch {}
+            }
+          } else {
+            const summary = s.summary ?? '';
+            md.push(`- [${date}] ${summary.slice(0, 80)}${summary.length > 80 ? '...' : ''}`);
+          }
+        }
+      }
+    } catch {}
+
+    // Recency-Gradient: Decisions letzte 7 Tage vollstaendig, aeltere nur Anzahl
+    try {
+      const recentDecisions = db.prepare(`
+        SELECT id, title, category, reasoning FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all() as any[];
+
+      const olderDecisionsCount = (db.prepare(`
+        SELECT COUNT(*) as c FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get() as any)?.c ?? 0;
+
+      if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
+        md.push('');
+        md.push('## Decisions');
+        for (const d of recentDecisions) {
+          const r = d.reasoning ?? '';
+          md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? '...' : ''}`);
+        }
+        if (olderDecisionsCount > 0) {
+          md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
+        }
+      }
+    } catch {}
+
+    // Recency-Gradient: Learnings letzte 7 Tage + auto_block immer
+    try {
+      const autoBlocks = db.prepare(`
+        SELECT anti_pattern, correct_pattern FROM learnings
+        WHERE auto_block = 1 AND archived_at IS NULL
+      `).all() as any[];
+
+      const recentLearnings = db.prepare(`
+        SELECT anti_pattern, correct_pattern, severity FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all() as any[];
+
+      const olderLearningsCount = (db.prepare(`
+        SELECT COUNT(*) as c FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get() as any)?.c ?? 0;
+
+      if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
+        md.push('');
+        md.push('## Learnings');
+        if (autoBlocks.length > 0) {
+          md.push('**Auto-Block Rules:**');
+          for (const l of autoBlocks) {
+            md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
+          }
+        }
+        for (const l of recentLearnings) {
+          md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
+        }
+        if (olderLearningsCount > 0) {
+          md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
+        }
       }
     } catch {}
 
@@ -1268,52 +1427,6 @@ server.tool(
         'Recent sessions:',
         ...sessions.map(s => `  [${s.started_at?.slice(0,10)}] ${s.emotional_tone ?? 'unknown'} (${s.mood_score}/5)`),
       ];
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
-    } catch (e) {
-      return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
-    }
-  }
-);
-// ═══════════════════════════════════════════════════
-// ATTENTION ANCHORS
-// ═══════════════════════════════════════════════════
-
-server.tool(
-  'cortex_add_anchor',
-  'Add an attention anchor — a topic that always gets priority context',
-  { topic: z.string(), priority: z.number().optional().default(5) },
-  async ({ topic, priority }) => {
-    const db = getDb();
-    try {
-      db.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
-      return { content: [{ type: 'text' as const, text: `Anchor added: "${topic}" (priority ${priority})` }] };
-    } catch {
-      return { content: [{ type: 'text' as const, text: `Anchor "${topic}" already exists or could not be added.` }] };
-    }
-  }
-);
-
-server.tool(
-  'cortex_remove_anchor',
-  'Remove an attention anchor by topic',
-  { topic: z.string() },
-  async ({ topic }) => {
-    const db = getDb();
-    const r = db.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
-    return { content: [{ type: 'text' as const, text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
-  }
-);
-
-server.tool(
-  'cortex_list_anchors',
-  'List all attention anchors',
-  {},
-  async () => {
-    const db = getDb();
-    try {
-      const anchors = db.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all() as any[];
-      if (anchors.length === 0) return { content: [{ type: 'text' as const, text: 'No attention anchors set.' }] };
-      const lines = anchors.map(a => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0,10) ?? 'never'})`);
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     } catch (e) {
       return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };

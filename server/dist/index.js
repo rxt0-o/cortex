@@ -12,6 +12,16 @@ import * as deps from './modules/dependencies.js';
 import * as diffs from './modules/diffs.js';
 import * as conventions from './modules/conventions.js';
 import * as health from './modules/health.js';
+function runAllPruning() {
+    const d = decisions.runDecisionsPruning();
+    const l = learnings.runLearningsPruning();
+    const e = errors.runErrorsPruning();
+    return {
+        decisions_archived: d.decisions_archived,
+        learnings_archived: l.learnings_archived,
+        errors_archived: e.errors_archived,
+    };
+}
 const server = new McpServer({
     name: 'project-cortex',
     version: '0.1.0',
@@ -31,6 +41,13 @@ server.tool('cortex_save_session', 'Save or update a session with summary, chang
 }, async ({ session_id, summary, key_changes, status }) => {
     getDb();
     sessions.createSession({ id: session_id });
+    // Auto-pruning beim Session-Start (Ebbinghaus-Forgetting-Curve)
+    if (!status || status === 'active') {
+        try {
+            runAllPruning();
+        }
+        catch { /* Pruning-Fehler blockieren Session-Start nicht */ }
+    }
     const session = sessions.updateSession(session_id, {
         summary,
         key_changes: key_changes,
@@ -50,6 +67,47 @@ server.tool('cortex_list_sessions', 'List recent sessions with summaries', {
         result = result.filter(s => s.tags?.includes(tag));
     }
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('cortex_run_pruning', 'Manually run Ebbinghaus pruning — archives unused decisions/learnings/errors. Runs automatically on session start.', {}, async () => {
+    getDb();
+    const result = runAllPruning();
+    const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
+    return {
+        content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    archived: result,
+                    total_archived: total,
+                    message: total > 0
+                        ? `${total} item(s) archived based on Ebbinghaus forgetting curve.`
+                        : 'Nothing to archive -- all items are fresh or recently accessed.',
+                }, null, 2),
+            }],
+    };
+});
+server.tool('cortex_get_access_stats', 'Show top accessed decisions, learnings and errors -- what gets used most', {}, async () => {
+    const db = getDb();
+    const topDecisions = db.prepare(`
+      SELECT id, title, category, access_count, last_accessed
+      FROM decisions WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+    const topLearnings = db.prepare(`
+      SELECT id, anti_pattern, severity, access_count, last_accessed
+      FROM learnings WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+    const topErrors = db.prepare(`
+      SELECT id, error_message, severity, access_count, last_accessed
+      FROM errors WHERE archived_at IS NULL
+      ORDER BY access_count DESC LIMIT 10
+    `).all();
+    return {
+        content: [{
+                type: 'text',
+                text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2),
+            }],
+    };
 });
 // ═══════════════════════════════════════════════════
 // SEARCH
@@ -825,14 +883,97 @@ server.tool('cortex_snapshot', 'Get a concise brain snapshot — top state, inte
         }
     }
     catch { }
-    // Last 3 sessions
+    // Recency-Gradient: letzte 3 Sessions vollstaendig, aeltere komprimiert
     try {
-        const recent = db.prepare(`SELECT started_at, summary FROM sessions WHERE status='completed' AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 3`).all();
+        const recent = db.prepare(`
+        SELECT id, started_at, summary, key_changes FROM sessions
+        WHERE status='completed' AND summary IS NOT NULL
+        ORDER BY started_at DESC LIMIT 10
+      `).all();
         if (recent.length > 0) {
             md.push('');
             md.push('## Recent Sessions');
-            for (const s of recent)
-                md.push(`- [${s.started_at?.slice(0, 10)}] ${s.summary}`);
+            for (let i = 0; i < recent.length; i++) {
+                const s = recent[i];
+                const date = s.started_at?.slice(0, 10) ?? '?';
+                if (i < 3) {
+                    md.push(`- [${date}] ${s.summary}`);
+                    if (s.key_changes) {
+                        try {
+                            const changes = JSON.parse(s.key_changes);
+                            for (const c of changes.slice(0, 3)) {
+                                md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                else {
+                    const summary = s.summary ?? '';
+                    md.push(`- [${date}] ${summary.slice(0, 80)}${summary.length > 80 ? '...' : ''}`);
+                }
+            }
+        }
+    }
+    catch { }
+    // Recency-Gradient: Decisions letzte 7 Tage vollstaendig, aeltere nur Anzahl
+    try {
+        const recentDecisions = db.prepare(`
+        SELECT id, title, category, reasoning FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all();
+        const olderDecisionsCount = db.prepare(`
+        SELECT COUNT(*) as c FROM decisions
+        WHERE archived_at IS NULL AND superseded_by IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get()?.c ?? 0;
+        if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
+            md.push('');
+            md.push('## Decisions');
+            for (const d of recentDecisions) {
+                const r = d.reasoning ?? '';
+                md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? '...' : ''}`);
+            }
+            if (olderDecisionsCount > 0) {
+                md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
+            }
+        }
+    }
+    catch { }
+    // Recency-Gradient: Learnings letzte 7 Tage + auto_block immer
+    try {
+        const autoBlocks = db.prepare(`
+        SELECT anti_pattern, correct_pattern FROM learnings
+        WHERE auto_block = 1 AND archived_at IS NULL
+      `).all();
+        const recentLearnings = db.prepare(`
+        SELECT anti_pattern, correct_pattern, severity FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at > datetime('now', '-7 days')
+        ORDER BY created_at DESC LIMIT 5
+      `).all();
+        const olderLearningsCount = db.prepare(`
+        SELECT COUNT(*) as c FROM learnings
+        WHERE auto_block = 0 AND archived_at IS NULL
+          AND created_at <= datetime('now', '-7 days')
+      `).get()?.c ?? 0;
+        if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
+            md.push('');
+            md.push('## Learnings');
+            if (autoBlocks.length > 0) {
+                md.push('**Auto-Block Rules:**');
+                for (const l of autoBlocks) {
+                    md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
+                }
+            }
+            for (const l of recentLearnings) {
+                md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
+            }
+            if (olderLearningsCount > 0) {
+                md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
+            }
         }
     }
     catch { }
