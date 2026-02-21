@@ -2,8 +2,7 @@
   "mcpServers": {
     "cortex": {
       "command": "node",
-      "args": ["./project-cortex/server/dist/index.js"],
-      "env": {}
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/dist/index.js"]
     }
   }
 }
