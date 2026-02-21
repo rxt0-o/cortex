@@ -1,0 +1,7 @@
+{
+  "name": "project-cortex",
+  "version": "0.1.0",
+  "description": "Intelligent project memory for Claude Code — remembers, learns, and protects.",
+  "author": "Giuse",
+  "homepage": "https://github.com/giuse/project-cortex"
+}

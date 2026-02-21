@@ -1,0 +1,7 @@
+{
+  "name": "project-cortex-hooks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hook scripts for Project Cortex"
+}
