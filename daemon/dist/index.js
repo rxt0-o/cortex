@@ -7,6 +7,7 @@ import { runLearnerAgent } from './agents/learner.js';
 import { runSynthesizerAgent } from './agents/synthesizerAgent.js';
 import { runSerendipityAgent } from './agents/serendipityAgent.js';
 import { runDriftDetectorAgent } from './agents/drift-detector.js';
+import { runMoodScorerAgent } from './agents/moodScorer.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf('--project');
@@ -68,6 +69,9 @@ setInterval(() => {
             });
             runSerendipityAgent(projectPath).catch(err => {
                 process.stderr.write(`[cortex-daemon] Serendipity error: ${err}\n`);
+            });
+            runMoodScorerAgent(projectPath, event.session_id, event.transcript_path).catch(err => {
+                process.stderr.write(`[cortex-daemon] MoodScorer error: ${err}\n`);
             });
             processed.push(event);
         }
