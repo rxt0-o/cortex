@@ -26,74 +26,48 @@ Cortex gives Claude Code a long-term brain. It tracks every session, remembers e
 ## Installation
 
 ```bash
-git clone https://github.com/rxt0-o/cortex.git
-cd cortex
-
-# Build MCP server
-cd server && npm install && npm run build && cd ..
+/plugin marketplace add rxt0-o/cortex
+/plugin install cortex@rxt0-o
 ```
 
-The daemon is pre-built (`daemon/dist/`) — no separate build step needed.
+That's it. Cortex automatically registers hooks, the MCP server, and all skills.
 
-### Register MCP Server
+**Requirements:** Node.js >= 22, Claude Code CLI
 
-Add to your project's `.mcp.json`:
+### Manual Installation (alternative)
+
+If you prefer to set up Cortex manually:
+
+```bash
+git clone https://github.com/rxt0-o/cortex.git
+```
+
+Add to `.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-session-start.js", "timeout": 15 }] }],
+    "PreToolUse": [{ "matcher": "Write|Edit", "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-pre-tool-use.js", "timeout": 5 }] }],
+    "PostToolUse": [{ "matcher": "Read|Write|Edit", "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-post-tool-use.js", "timeout": 10 }] }],
+    "PreCompact": [{ "matcher": "", "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-pre-compact.js", "timeout": 15 }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-session-end.js", "timeout": 30 }] }]
+  }
+}
+```
+
+Add to `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "cortex": {
       "command": "node",
-      "args": ["/absolute/path/to/cortex/server/dist/index.js"]
+      "args": ["/path/to/cortex/server/dist/index.js"]
     }
   }
 }
 ```
-
-### Activate Hooks
-
-Add to your project's `.claude/settings.local.json` (or your global `~/.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-session-start.js", "timeout": 15 }]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-pre-tool-use.js", "timeout": 5 }]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Read|Write|Edit",
-        "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-post-tool-use.js", "timeout": 10 }]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-pre-compact.js", "timeout": 15 }]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "node /path/to/cortex/scripts/on-session-end.js", "timeout": 30 }]
-      }
-    ]
-  }
-}
-```
-
-Replace `/path/to/cortex` with the absolute path to your cloned repo.
-
-That's it. Start Claude Code. Cortex is running.
 
 ---
 
