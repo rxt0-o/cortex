@@ -9,6 +9,9 @@ export interface Learning {
     severity: string;
     occurrences: number;
     auto_block: boolean;
+    access_count: number;
+    last_accessed: string | null;
+    archived_at: string | null;
 }
 export interface AddLearningInput {
     session_id?: string;
@@ -44,4 +47,8 @@ export declare function checkContentAgainstLearnings(content: string): Array<{
     learning: Learning;
     match: string;
 }>;
+export interface LearningPruningResult {
+    learnings_archived: number;
+}
+export declare function runLearningsPruning(): LearningPruningResult;
 //# sourceMappingURL=learnings.d.ts.map

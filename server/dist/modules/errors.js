@@ -45,6 +45,7 @@ export function getError(id) {
     const row = db.prepare('SELECT * FROM errors WHERE id = ?').get(id);
     if (!row)
         return null;
+    db.prepare('UPDATE errors SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
     return {
         ...row,
         files_involved: parseJson(row.files_involved),
@@ -54,6 +55,7 @@ export function listErrors(options = {}) {
     const db = getDb();
     const conditions = [];
     const params = [];
+    conditions.push('archived_at IS NULL');
     if (options.severity) {
         conditions.push('severity = ?');
         params.push(options.severity);
@@ -145,6 +147,20 @@ export function updateError(input) {
     values.push(input.id);
     db.prepare(`UPDATE errors SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return getError(input.id);
+}
+export function runErrorsPruning() {
+    const db = getDb();
+    const result = db.prepare(`
+    UPDATE errors
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND (
+        (first_seen < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (first_seen < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+    return { errors_archived: Number(result.changes) };
 }
 export function getPreventionRules() {
     const db = getDb();

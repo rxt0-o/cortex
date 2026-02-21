@@ -12,6 +12,7 @@ export function getDecision(id) {
     const row = db.prepare('SELECT * FROM decisions WHERE id = ?').get(id);
     if (!row)
         return null;
+    db.prepare('UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
     return {
         ...row,
         alternatives: parseJson(row.alternatives),
@@ -22,6 +23,7 @@ export function listDecisions(options = {}) {
     const db = getDb();
     const conditions = [];
     const params = [];
+    conditions.push('archived_at IS NULL');
     if (options.category) {
         conditions.push('category = ?');
         params.push(options.category);
@@ -60,6 +62,21 @@ export function searchDecisions(query, limit = 10) {
 export function supersedeDecision(oldId, newId) {
     const db = getDb();
     db.prepare('UPDATE decisions SET superseded_by = ? WHERE id = ?').run(newId, oldId);
+}
+export function runDecisionsPruning() {
+    const db = getDb();
+    const result = db.prepare(`
+    UPDATE decisions
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND superseded_by IS NULL
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+    return { decisions_archived: Number(result.changes) };
 }
 export function getDecisionsForFile(filePath) {
     const db = getDb();

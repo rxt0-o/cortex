@@ -12,12 +12,14 @@ export function getLearning(id) {
     const row = db.prepare('SELECT * FROM learnings WHERE id = ?').get(id);
     if (!row)
         return null;
+    db.prepare('UPDATE learnings SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
     return { ...row, auto_block: Boolean(row.auto_block) };
 }
 export function listLearnings(options = {}) {
     const db = getDb();
     const conditions = [];
     const params = [];
+    conditions.push('archived_at IS NULL');
     if (options.severity) {
         conditions.push('severity = ?');
         params.push(options.severity);
@@ -60,7 +62,7 @@ export function searchLearnings(query, limit = 10) {
 }
 export function getAutoBlockLearnings() {
     const db = getDb();
-    const rows = db.prepare('SELECT * FROM learnings WHERE auto_block = 1').all();
+    const rows = db.prepare('SELECT * FROM learnings WHERE auto_block = 1 AND archived_at IS NULL').all();
     return rows.map((row) => ({ ...row, auto_block: true }));
 }
 export function updateLearning(input) {
@@ -125,5 +127,21 @@ export function checkContentAgainstLearnings(content) {
         }
     }
     return matches;
+}
+export function runLearningsPruning() {
+    const db = getDb();
+    // auto_block = 1 wird NIEMALS archiviert
+    const result = db.prepare(`
+    UPDATE learnings
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND auto_block = 0
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+    return { learnings_archived: Number(result.changes) };
 }
 //# sourceMappingURL=learnings.js.map

@@ -12,6 +12,9 @@ export interface CortexError {
     files_involved: string[] | null;
     prevention_rule: string | null;
     severity: string;
+    access_count: number;
+    last_accessed: string | null;
+    archived_at: string | null;
 }
 export interface AddErrorInput {
     session_id?: string;
@@ -43,6 +46,10 @@ export interface UpdateErrorInput {
     severity?: string;
 }
 export declare function updateError(input: UpdateErrorInput): CortexError | null;
+export interface ErrorPruningResult {
+    errors_archived: number;
+}
+export declare function runErrorsPruning(): ErrorPruningResult;
 export declare function getPreventionRules(): Array<{
     id: number;
     prevention_rule: string;

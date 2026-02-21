@@ -30322,6 +30322,7 @@ function getDecision(id) {
   const row = db2.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
   if (!row)
     return null;
+  db2.prepare("UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
   return {
     ...row,
     alternatives: parseJson(row.alternatives),
@@ -30332,6 +30333,7 @@ function listDecisions(options = {}) {
   const db2 = getDb();
   const conditions = [];
   const params = [];
+  conditions.push("archived_at IS NULL");
   if (options.category) {
     conditions.push("category = ?");
     params.push(options.category);
@@ -30420,6 +30422,7 @@ function getError(id) {
   const row = db2.prepare("SELECT * FROM errors WHERE id = ?").get(id);
   if (!row)
     return null;
+  db2.prepare("UPDATE errors SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
   return {
     ...row,
     files_involved: parseJson(row.files_involved)
@@ -30429,6 +30432,7 @@ function listErrors(options = {}) {
   const db2 = getDb();
   const conditions = [];
   const params = [];
+  conditions.push("archived_at IS NULL");
   if (options.severity) {
     conditions.push("severity = ?");
     params.push(options.severity);
@@ -30542,12 +30546,14 @@ function getLearning(id) {
   const row = db2.prepare("SELECT * FROM learnings WHERE id = ?").get(id);
   if (!row)
     return null;
+  db2.prepare("UPDATE learnings SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
   return { ...row, auto_block: Boolean(row.auto_block) };
 }
 function listLearnings(options = {}) {
   const db2 = getDb();
   const conditions = [];
   const params = [];
+  conditions.push("archived_at IS NULL");
   if (options.severity) {
     conditions.push("severity = ?");
     params.push(options.severity);
@@ -30587,7 +30593,7 @@ function searchLearnings(query, limit = 10) {
 }
 function getAutoBlockLearnings() {
   const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM learnings WHERE auto_block = 1").all();
+  const rows = db2.prepare("SELECT * FROM learnings WHERE auto_block = 1 AND archived_at IS NULL").all();
   return rows.map((row) => ({ ...row, auto_block: true }));
 }
 function updateLearning(input) {

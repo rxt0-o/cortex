@@ -9,6 +9,9 @@ export interface Decision {
     files_affected: string[] | null;
     superseded_by: number | null;
     confidence: string;
+    access_count: number;
+    last_accessed: string | null;
+    archived_at: string | null;
 }
 export interface Alternative {
     option: string;
@@ -32,5 +35,9 @@ export declare function listDecisions(options?: {
 }): Decision[];
 export declare function searchDecisions(query: string, limit?: number): Decision[];
 export declare function supersedeDecision(oldId: number, newId: number): void;
+export interface DecisionPruningResult {
+    decisions_archived: number;
+}
+export declare function runDecisionsPruning(): DecisionPruningResult;
 export declare function getDecisionsForFile(filePath: string): Decision[];
 //# sourceMappingURL=decisions.d.ts.map

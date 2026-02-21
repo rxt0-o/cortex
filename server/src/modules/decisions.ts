@@ -11,6 +11,9 @@ export interface Decision {
   files_affected: string[] | null;
   superseded_by: number | null;
   confidence: string;
+  access_count: number;
+  last_accessed: string | null;
+  archived_at: string | null;
 }
 
 export interface Alternative {
@@ -51,6 +54,7 @@ export function getDecision(id: number): Decision | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM decisions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
+  db.prepare('UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?').run(now(), id);
   return {
     ...row,
     alternatives: parseJson<Alternative[]>(row.alternatives as string),
@@ -66,6 +70,7 @@ export function listDecisions(options: {
   const db = getDb();
   const conditions: string[] = [];
   const params: SQLInputValue[] = [];
+  conditions.push('archived_at IS NULL');
 
   if (options.category) {
     conditions.push('category = ?');
@@ -110,6 +115,26 @@ export function searchDecisions(query: string, limit = 10): Decision[] {
 export function supersedeDecision(oldId: number, newId: number): void {
   const db = getDb();
   db.prepare('UPDATE decisions SET superseded_by = ? WHERE id = ?').run(newId, oldId);
+}
+
+export interface DecisionPruningResult {
+  decisions_archived: number;
+}
+
+export function runDecisionsPruning(): DecisionPruningResult {
+  const db = getDb();
+  const result = db.prepare(`
+    UPDATE decisions
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND superseded_by IS NULL
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { decisions_archived: Number(result.changes) };
 }
 
 export function getDecisionsForFile(filePath: string): Decision[] {
