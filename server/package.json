@@ -1,6 +1,6 @@
 {
   "name": "project-cortex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Intelligent project memory for Claude Code — remembers, learns, and protects.",
   "type": "module",
   "main": "dist/index.js",
