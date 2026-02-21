@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Daemon dist wird getrackt (kein Build-Schritt beim Deployment noetig)
+!daemon/dist/
 *.db
 *.db-shm
 *.db-wal
