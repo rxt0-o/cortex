@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Stop Hook — Summarize session and save to DB
+// Stop Hook — Summarize session and save to DB + notify daemon
 
-import { readFileSync, existsSync, createReadStream } from 'fs';
+import { readFileSync, existsSync, createReadStream, appendFileSync } from 'fs';
 import { createInterface } from 'readline';
+import { join } from 'path';
 import { openDb } from './ensure-db.js';
 
 async function main() {
@@ -59,6 +60,18 @@ async function main() {
     const fStmt = db.prepare(`INSERT INTO project_files (path, change_count, last_changed, last_changed_session) VALUES (?, 1, ?, ?)
       ON CONFLICT(path) DO UPDATE SET change_count = project_files.change_count + 1, last_changed = ?, last_changed_session = ?`);
     for (const f of fileList) fStmt.run(f, ts, session_id, ts, session_id);
+
+    // session_end Event fuer Daemon queuen (Learner-Agent)
+    try {
+      const queuePath = join(cwd, '.claude', 'cortex-events.jsonl');
+      const event = {
+        type: 'session_end',
+        session_id,
+        transcript_path: transcript_path || null,
+        ts: ts,
+      };
+      appendFileSync(queuePath, JSON.stringify(event) + '\n', 'utf-8');
+    } catch { /* nicht kritisch */ }
 
     // Health snapshot
     try {

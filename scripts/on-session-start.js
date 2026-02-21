@@ -1,13 +1,46 @@
 #!/usr/bin/env node
-// SessionStart Hook — Loads relevant context and injects it
+// SessionStart Hook — Loads relevant context and injects it + starts daemon
 
-import { readFileSync, existsSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { execFileSync, spawn } from 'child_process';
+import { join } from 'path';
 import { openDb } from './ensure-db.js';
+
+function ensureDaemonRunning(cwd) {
+  try {
+    const pidPath = join(cwd, '.claude', 'cortex-daemon.pid');
+    const daemonScript = 'C:/Users/toasted/Desktop/data/cortex/daemon/dist/index.js';
+
+    if (!existsSync(daemonScript)) return; // Daemon nicht gebaut
+
+    if (existsSync(pidPath)) {
+      const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+      // Pruefen ob Prozess noch laeuft (kill 0 = nur Signal-Check)
+      try {
+        process.kill(pid, 0);
+        return; // Daemon laeuft bereits
+      } catch {
+        // PID ist veraltet, loeschen
+        try { require('fs').unlinkSync(pidPath); } catch { /* ignore */ }
+      }
+    }
+
+    // Daemon als detached Prozess starten
+    const daemon = spawn('node', [daemonScript, '--project', cwd], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    daemon.unref();
+  } catch { /* nicht kritisch */ }
+}
 
 function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
   const { session_id, cwd } = input;
+
+  // Daemon starten (falls nicht bereits laufend)
+  ensureDaemonRunning(cwd);
 
   const db = openDb(cwd);
 

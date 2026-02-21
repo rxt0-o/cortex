@@ -1,4 +1,22 @@
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+
+// Windows: claude.cmd im npm-Verzeichnis finden
+function findClaudeBin(): string {
+  const candidates = [
+    process.env.CLAUDE_BIN,
+    // npm global bin (Windows)
+    `${process.env.APPDATA}\\npm\\claude.cmd`,
+    `${process.env.APPDATA}\\npm\\claude`,
+    // Unix
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+  ].filter(Boolean) as string[];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return 'claude'; // Fallback: PATH
+}
 
 export interface RunnerOptions {
   prompt: string;
@@ -30,14 +48,21 @@ export async function runClaudeAgent(opts: RunnerOptions): Promise<RunnerResult>
       let output = '';
       let errOutput = '';
 
-      const proc = spawn('claude', [
+      const claudeBin = findClaudeBin();
+      // CLAUDECODE muss ungesetzt sein, sonst verweigert Claude Code den Start
+      const env = { ...process.env };
+      delete env['CLAUDECODE'];
+
+      const proc = spawn(claudeBin, [
         '-p', opts.prompt,
         '--output-format', 'text',
         '--dangerously-skip-permissions',
       ], {
         cwd: opts.projectPath,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env,
+        // Windows: .cmd Dateien brauchen shell: true
+        shell: claudeBin.endsWith('.cmd'),
       });
 
       proc.stdout.on('data', (d: Buffer) => { output += d.toString(); });

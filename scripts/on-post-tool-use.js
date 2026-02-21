@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// PostToolUse Hook (async) — Track file changes
+// PostToolUse Hook (async) — Track file changes + queue events for daemon
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, appendFileSync } from 'fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 
@@ -9,8 +9,39 @@ function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
   const { tool_name, tool_input, session_id, cwd } = input;
 
-  if (!['Write', 'Edit'].includes(tool_name)) process.exit(0);
   const filePath = tool_input?.file_path;
+
+  // Read-Event: file_access in Queue schreiben + ggf. Feedback lesen
+  if (tool_name === 'Read' && filePath) {
+    const queuePath = join(cwd, '.claude', 'cortex-events.jsonl');
+    const event = { type: 'file_access', file: filePath, tool: 'Read', session_id, ts: new Date().toISOString() };
+    try { appendFileSync(queuePath, JSON.stringify(event) + '\n', 'utf-8'); } catch { /* nicht kritisch */ }
+
+    // Feedback aus cortex-feedback.jsonl fuer diese Datei lesen (neueste Zeile)
+    const feedbackPath = join(cwd, '.claude', 'cortex-feedback.jsonl');
+    if (existsSync(feedbackPath)) {
+      try {
+        const lines = readFileSync(feedbackPath, 'utf-8').split('\n').filter(l => l.trim());
+        // Suche neuesten Feedback-Eintrag fuer diese Datei
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const fb = JSON.parse(lines[i]);
+          if (fb.file === filePath && fb.message) {
+            // Feedback an Claude ausgeben
+            process.stdout.write(JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName: 'PostToolUse',
+                additionalContext: `[Cortex] ${fb.message}`,
+              },
+            }));
+            break;
+          }
+        }
+      } catch { /* nicht kritisch */ }
+    }
+    process.exit(0);
+  }
+
+  if (!['Write', 'Edit'].includes(tool_name)) process.exit(0);
   if (!filePath) process.exit(0);
 
   const dbPath = join(cwd, '.claude', 'cortex.db');
