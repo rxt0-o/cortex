@@ -92,6 +92,16 @@ function main() {
     try { snoozeDue = db.prepare(`SELECT id, description FROM unfinished WHERE snooze_until IS NOT NULL AND snooze_until <= datetime('now') AND resolved_at IS NULL ORDER BY snooze_until ASC LIMIT 5`).all(); } catch {}
     if (snoozeDue.length > 0) { parts.push('REMINDERS DUE:'); snoozeDue.forEach(s => parts.push(`  [REMIND] ${s.description}`)); }
 
+    // Surface open intents
+    let openIntents = [];
+    try {
+      openIntents = db.prepare(`SELECT description FROM unfinished WHERE context='intent' AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 3`).all();
+    } catch {}
+    if (openIntents.length > 0) {
+      parts.push('OPEN INTENTS:');
+      openIntents.forEach(i => parts.push(`  -> ${i.description.replace('[INTENT] ', '')}`));
+    }
+
     // 4. Errors in changed files
     if (changedFiles.length > 0) {
       const errStmt = db.prepare(`SELECT error_message, fix_description FROM errors WHERE files_involved LIKE ? ORDER BY occurrences DESC LIMIT 2`);

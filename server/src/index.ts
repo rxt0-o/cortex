@@ -955,6 +955,59 @@ server.tool(
   }
 );
 
+
+// ═══════════════════════════════════════════════════
+// BLIND SPOTS + INTENT MEMORY
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_check_blind_spots',
+  'Find project files not touched in recent sessions — potential blind spots',
+  { days: z.number().optional().default(14), limit: z.number().optional().default(10) },
+  async ({ days, limit }) => {
+    const db = getDb();
+    try {
+      const untouched = db.prepare(`
+        SELECT path, change_count, last_changed FROM project_files
+        WHERE (last_changed IS NULL OR last_changed < datetime('now', ? || ' days'))
+          AND change_count > 0
+        ORDER BY change_count DESC LIMIT ?
+      `).all(`-${days}`, limit) as any[];
+
+      if (untouched.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No blind spots detected — all active files touched recently.' }] };
+      }
+
+      const lines = [`Blind spots (not touched in ${days}d):`];
+      for (const f of untouched) {
+        lines.push(`  ${f.path} (${f.change_count} total changes, last: ${f.last_changed?.slice(0,10) ?? 'never'})`);
+      }
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+    }
+  }
+);
+
+server.tool(
+  'cortex_add_intent',
+  'Store a stated intention for follow-up in future sessions',
+  {
+    intent: z.string().describe('What you plan to do next'),
+    session_id: z.string().optional(),
+  },
+  async ({ intent, session_id }) => {
+    const db = getDb();
+    // Store as unfinished with context 'intent'
+    const ts = new Date().toISOString();
+    db.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(session_id ?? `intent-${ts}`, ts);
+    db.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(
+      session_id ?? null, ts, `[INTENT] ${intent}`
+    );
+    return { content: [{ type: 'text' as const, text: `Intent stored: "${intent}"` }] };
+  }
+);
+
 // ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════

@@ -63,6 +63,12 @@ setInterval(() => {
       runDriftDetectorAgent(projectPath).catch(err => {
         process.stderr.write(`[cortex-daemon] DriftDetector error: ${err}\n`);
       });
+      runSynthesizerAgent(projectPath).catch(err => {
+        process.stderr.write(`[cortex-daemon] Synthesizer error: ${err}\n`);
+      });
+      runSerendipityAgent(projectPath).catch(err => {
+        process.stderr.write(`[cortex-daemon] Serendipity error: ${err}\n`);
+      });
       processed.push(event);
     }
   }

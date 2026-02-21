@@ -4,6 +4,8 @@ import { EventQueue } from './queue.js';
 import { runArchitectAgent } from './agents/architect.js';
 import { runContextAgent } from './agents/context.js';
 import { runLearnerAgent } from './agents/learner.js';
+import { runSynthesizerAgent } from './agents/synthesizerAgent.js';
+import { runSerendipityAgent } from './agents/serendipityAgent.js';
 import { runDriftDetectorAgent } from './agents/drift-detector.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
@@ -60,6 +62,12 @@ setInterval(() => {
             });
             runDriftDetectorAgent(projectPath).catch(err => {
                 process.stderr.write(`[cortex-daemon] DriftDetector error: ${err}\n`);
+            });
+            runSynthesizerAgent(projectPath).catch(err => {
+                process.stderr.write(`[cortex-daemon] Synthesizer error: ${err}\n`);
+            });
+            runSerendipityAgent(projectPath).catch(err => {
+                process.stderr.write(`[cortex-daemon] Serendipity error: ${err}\n`);
             });
             processed.push(event);
         }

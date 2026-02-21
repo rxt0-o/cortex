@@ -31689,6 +31689,37 @@ server.tool("cortex_dejavu", "Check if a task looks similar to past sessions (de
   return { content: [{ type: "text", text: unique.length > 0 ? `Deja-vu matches:
 ${unique.join("\n")}` : "No similar sessions found." }] };
 });
+server.tool("cortex_check_blind_spots", "Find project files not touched in recent sessions \u2014 potential blind spots", { days: external_exports3.number().optional().default(14), limit: external_exports3.number().optional().default(10) }, async ({ days, limit }) => {
+  const db2 = getDb();
+  try {
+    const untouched = db2.prepare(`
+        SELECT path, change_count, last_changed FROM project_files
+        WHERE (last_changed IS NULL OR last_changed < datetime('now', ? || ' days'))
+          AND change_count > 0
+        ORDER BY change_count DESC LIMIT ?
+      `).all(`-${days}`, limit);
+    if (untouched.length === 0) {
+      return { content: [{ type: "text", text: "No blind spots detected \u2014 all active files touched recently." }] };
+    }
+    const lines = [`Blind spots (not touched in ${days}d):`];
+    for (const f of untouched) {
+      lines.push(`  ${f.path} (${f.change_count} total changes, last: ${f.last_changed?.slice(0, 10) ?? "never"})`);
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  } catch (e) {
+    return { content: [{ type: "text", text: `Error: ${e}` }] };
+  }
+});
+server.tool("cortex_add_intent", "Store a stated intention for follow-up in future sessions", {
+  intent: external_exports3.string().describe("What you plan to do next"),
+  session_id: external_exports3.string().optional()
+}, async ({ intent, session_id }) => {
+  const db2 = getDb();
+  const ts = (/* @__PURE__ */ new Date()).toISOString();
+  db2.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(session_id ?? `intent-${ts}`, ts);
+  db2.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(session_id ?? null, ts, `[INTENT] ${intent}`);
+  return { content: [{ type: "text", text: `Intent stored: "${intent}"` }] };
+});
 async function main() {
   getDb();
   const transport = new StdioServerTransport();
