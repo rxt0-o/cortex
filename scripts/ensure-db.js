@@ -107,6 +107,10 @@ export function openDb(cwd) {
     `ALTER TABLE errors ADD COLUMN archived INTEGER DEFAULT 0`,
     `ALTER TABLE sessions ADD COLUMN sentiment TEXT`,
     `CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, tags TEXT, created_at TEXT DEFAULT (datetime('now')), session_id TEXT)`,
+    `CREATE TABLE IF NOT EXISTS user_profile (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, role TEXT, working_style TEXT, expertise_areas TEXT, communication_preference TEXT, updated_at TEXT DEFAULT (datetime('now')))`,
+    `CREATE TABLE IF NOT EXISTS attention_anchors (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, priority INTEGER DEFAULT 5, created_at TEXT DEFAULT (datetime('now')), last_touched TEXT)`,
+    `ALTER TABLE sessions ADD COLUMN emotional_tone TEXT`,
+    `ALTER TABLE sessions ADD COLUMN mood_score INTEGER`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 

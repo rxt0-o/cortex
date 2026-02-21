@@ -102,6 +102,12 @@ function main() {
       openIntents.forEach(i => parts.push(`  -> ${i.description.replace('[INTENT] ', '')}`));
     }
 
+    // Proactive nudges: anchors not touched in 7 days
+    try {
+      const staleAnchors = db.prepare(`SELECT topic FROM attention_anchors WHERE last_touched IS NULL OR last_touched < datetime('now','-7 days') ORDER BY priority DESC LIMIT 3`).get();
+      if (staleAnchors) parts.push(`  NUDGE: Anchor not touched in 7d: "${staleAnchors.topic}"`);
+    } catch {}
+
     // 4. Errors in changed files
     if (changedFiles.length > 0) {
       const errStmt = db.prepare(`SELECT error_message, fix_description FROM errors WHERE files_involved LIKE ? ORDER BY occurrences DESC LIMIT 2`);
@@ -169,6 +175,11 @@ function main() {
     }
 
     const healthStr = health ? ` | Health: ${health.score}/100 (${health.trend === 'up' ? '+' : health.trend === 'down' ? '-' : '='})` : '';
+
+    // Circadian awareness
+    const hour = new Date().getHours();
+    if (hour < 12) parts.push('  MODE: Morning — focus mode active');
+    else if (hour >= 17) parts.push('  MODE: Evening — review mode active');
 
     const context = [
       `-- Project Cortex${healthStr} --`,
