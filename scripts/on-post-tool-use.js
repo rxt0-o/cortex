@@ -41,8 +41,17 @@ function main() {
     process.exit(0);
   }
 
-  if (!['Write', 'Edit'].includes(tool_name)) process.exit(0);
-  if (!filePath) process.exit(0);
+  if (!['Write', 'Edit', 'Bash'].includes(tool_name)) process.exit(0);
+
+  // Bash: fruehzeitig pruefen ob migration-relevant, sonst exit
+  if (tool_name === 'Bash') {
+    const cmd = tool_input?.command || '';
+    const hasMigration = cmd.includes('migrations/');
+    const hasGit = /git\s+(?:add|commit)/.test(cmd);
+    if (!hasMigration || !hasGit) process.exit(0);
+  }
+
+  if (!filePath && tool_name !== 'Bash') process.exit(0);
 
   const dbPath = join(cwd, '.claude', 'cortex.db');
   if (!existsSync(dbPath)) process.exit(0);
@@ -52,41 +61,72 @@ function main() {
   try {
     const ts = new Date().toISOString();
 
-    // 1. Track file change (Hot Zones)
-    db.prepare(`
-      INSERT INTO project_files (path, change_count, last_changed, last_changed_session)
-      VALUES (?, 1, ?, ?)
-      ON CONFLICT(path) DO UPDATE SET
-        change_count = project_files.change_count + 1, last_changed = ?, last_changed_session = ?
-    `).run(filePath, ts, session_id, ts, session_id);
+    if (tool_name !== 'Bash') {
+      // 1. Track file change (Hot Zones)
+      db.prepare(`
+        INSERT INTO project_files (path, change_count, last_changed, last_changed_session)
+        VALUES (?, 1, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+          change_count = project_files.change_count + 1, last_changed = ?, last_changed_session = ?
+      `).run(filePath, ts, session_id, ts, session_id);
 
-    // 2. Infer file type
-    const ft = inferFileType(filePath);
-    if (ft) db.prepare('UPDATE project_files SET file_type = COALESCE(file_type, ?) WHERE path = ?').run(ft, filePath);
+      // 2. Infer file type
+      const ft = inferFileType(filePath);
+      if (ft) db.prepare('UPDATE project_files SET file_type = COALESCE(file_type, ?) WHERE path = ?').run(ft, filePath);
 
-    // 3. Ensure session exists for FK constraint
-    db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, ts, 'active');
+      // 3. Ensure session exists for FK constraint
+      db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, ts, 'active');
 
-    // 4. Save diff
-    if (tool_name === 'Edit' && tool_input.old_string && tool_input.new_string) {
-      db.prepare(`INSERT INTO diffs (session_id, file_path, diff_content, change_type, lines_added, lines_removed, created_at)
-        VALUES (?, ?, ?, 'modified', ?, ?, ?)`).run(
-        session_id, filePath, `--- a\n+++ b\n-${tool_input.old_string}\n+${tool_input.new_string}`,
-        tool_input.new_string.split('\n').length, tool_input.old_string.split('\n').length, ts);
-    } else if (tool_name === 'Write') {
-      const lines = (tool_input.content || '').split('\n').length;
-      db.prepare(`INSERT INTO diffs (session_id, file_path, diff_content, change_type, lines_added, lines_removed, created_at)
-        VALUES (?, ?, ?, 'modified', ?, 0, ?)`).run(session_id, filePath, `[Write: ${lines} lines]`, lines, ts);
+      // 4. Save diff
+      if (tool_name === 'Edit' && tool_input.old_string && tool_input.new_string) {
+        db.prepare(`INSERT INTO diffs (session_id, file_path, diff_content, change_type, lines_added, lines_removed, created_at)
+          VALUES (?, ?, ?, 'modified', ?, ?, ?)`).run(
+          session_id, filePath, `--- a\n+++ b\n-${tool_input.old_string}\n+${tool_input.new_string}`,
+          tool_input.new_string.split('\n').length, tool_input.old_string.split('\n').length, ts);
+      } else if (tool_name === 'Write') {
+        const lines = (tool_input.content || '').split('\n').length;
+        db.prepare(`INSERT INTO diffs (session_id, file_path, diff_content, change_type, lines_added, lines_removed, created_at)
+          VALUES (?, ?, ?, 'modified', ?, 0, ?)`).run(session_id, filePath, `[Write: ${lines} lines]`, lines, ts);
+      }
+
+      // 5. Scan imports
+      const content = tool_input.content || '';
+      if (content) {
+        const ext = filePath.split('.').pop()?.toLowerCase();
+        if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext || '')) {
+          db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(filePath);
+          const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
+          for (const imp of scanImports(content, ext)) stmt.run(filePath, imp, 'static');
+        }
+      }
     }
 
-    // 5. Scan imports
-    const content = tool_input.content || '';
-    if (content) {
-      const ext = filePath.split('.').pop()?.toLowerCase();
-      if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext || '')) {
-        db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(filePath);
-        const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
-        for (const imp of scanImports(content, ext)) stmt.run(filePath, imp, 'static');
+    // 6. Migration-Tracking (Gotcha #133)
+    if (tool_name === 'Bash') {
+      const cmd = tool_input?.command || '';
+      const migrationMatches = cmd.match(/migrations\/[\w_]+\.sql/g);
+      if (migrationMatches && /git\s+(?:add|commit)/.test(cmd)) {
+        // Ensure session exists for FK constraint
+        db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, ts, 'active');
+        for (const mig of migrationMatches) {
+          const migName = mig.split('/').pop();
+          const description = `Deploy migration in Supabase SQL Editor: ${migName}`;
+          // Duplikate vermeiden
+          const existing = db.prepare(
+            "SELECT id FROM unfinished WHERE description = ? AND resolved_at IS NULL"
+          ).get(description);
+          if (!existing) {
+            db.prepare(`
+              INSERT INTO unfinished (session_id, created_at, description, context, priority)
+              VALUES (?, ?, ?, ?, 'high')
+            `).run(
+              session_id,
+              new Date().toISOString(),
+              description,
+              'Automatisch erkannt via Cortex Migration-Tracker (Gotcha #133)'
+            );
+          }
+        }
       }
     }
   } finally {
