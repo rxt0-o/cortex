@@ -9,6 +9,5 @@
   "homepage": "https://github.com/rxt0-o/cortex",
   "repository": "https://github.com/rxt0-o/cortex",
   "license": "MIT",
-  "keywords": ["memory", "sessions", "architecture", "learning", "daemon", "context", "mcp"],
-  "category": "productivity"
+  "keywords": ["memory", "sessions", "architecture", "learning", "daemon", "context", "mcp", "cortex"]
 }
