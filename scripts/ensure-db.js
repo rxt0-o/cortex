@@ -204,6 +204,7 @@ export function openDb(cwd) {
     `CREATE INDEX IF NOT EXISTS idx_work_patterns_type ON work_patterns(pattern_type)`,
     `CREATE INDEX IF NOT EXISTS idx_work_patterns_confidence ON work_patterns(confidence)`,
     `ALTER TABLE project_files ADD COLUMN cluster_id INTEGER`,
+    `ALTER TABLE learnings ADD COLUMN confidence REAL DEFAULT 0.7`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 
