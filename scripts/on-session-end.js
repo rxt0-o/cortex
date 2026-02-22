@@ -124,9 +124,9 @@ async function main() {
       db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
     } catch {}
 
-    // Confidence Decay: -0.01 pro Session für nicht-gepinnte Learnings
+    // Confidence Decay: -0.01 pro Session für auto_block Learnings (nicht core_memory)
     try {
-      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, COALESCE(confidence, 0.7) - 0.01) WHERE core_memory != 1 AND archived != 1`).run();
+      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, COALESCE(confidence, 0.7) - 0.01) WHERE auto_block = 1 AND core_memory != 1 AND archived != 1`).run();
     } catch {}
 
     // Priority scoring: bump high-priority items that are overdue

@@ -276,7 +276,8 @@ function main() {
     if (lowConfidence.length > 0) {
       parts.push('REVIEW NEEDED (low confidence):');
       for (const l of lowConfidence) {
-        parts.push(`  ? Learning #${l.id} (${(l.confidence * 100).toFixed(0)}%): "${l.anti_pattern}" — keep or archive?`);
+        parts.push(`  ? Learning #${l.id} (${(l.confidence * 100).toFixed(0)}%): "${l.anti_pattern}"`);
+        parts.push(`    keep: cortex_update_learning(id=${l.id}, confidence=0.7) | archive: cortex_delete_learning(id=${l.id})`);
       }
     }
 
