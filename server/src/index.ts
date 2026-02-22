@@ -1604,6 +1604,7 @@ server.tool(
     ).describe('List of categories to load guidance for. Example: ["memory", "decisions"]'),
   },
   async ({ categories }) => {
+    getDb();
     try {
       const guidance = getToolGuidance(categories);
       return { content: [{ type: 'text' as const, text: guidance }] };

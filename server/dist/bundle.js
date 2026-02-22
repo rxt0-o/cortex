@@ -32540,6 +32540,7 @@ server.tool("cortex_cross_project_search", "Search across all projects in this C
 server.tool("cortex_load_tools", "Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.", {
   categories: external_exports3.array(external_exports3.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(", ")}`)).describe('List of categories to load guidance for. Example: ["memory", "decisions"]')
 }, async ({ categories }) => {
+  getDb();
   try {
     const guidance = getToolGuidance(categories);
     return { content: [{ type: "text", text: guidance }] };

@@ -49,3 +49,4 @@ server/src/
 | Notes & Profile | cortex_add_note, cortex_list_notes, cortex_onboard, cortex_update_profile |
 | Intelligence | cortex_dejavu, cortex_check_blind_spots, cortex_get_mood, cortex_forget |
 | Stats | cortex_get_health, cortex_get_stats, cortex_get_access_stats, cortex_run_pruning |
+| Meta | cortex_load_tools |
