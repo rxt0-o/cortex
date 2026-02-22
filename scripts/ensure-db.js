@@ -165,6 +165,31 @@ export function openDb(cwd) {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
     `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
+    `CREATE TABLE IF NOT EXISTS session_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cache_read_tokens INTEGER,
+      cache_write_tokens INTEGER,
+      cost_usd REAL,
+      duration_ms INTEGER,
+      recorded_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_session_metrics_session ON session_metrics(session_id)`,
+    `CREATE TABLE IF NOT EXISTS agent_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_name TEXT NOT NULL,
+      session_id TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      success INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      items_saved INTEGER DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at)`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 
