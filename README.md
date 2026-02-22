@@ -82,6 +82,7 @@ Six plain Node.js scripts run as Claude Code hooks. Zero npm dependencies — th
 | Hook | Trigger | What it does |
 |---|---|---|
 | `on-session-start.js` | Every session start | Creates DB, injects context, **starts the daemon** |
+| `on-user-prompt-submit.js` | Every user message | Context window size early-warning (thresholds: 0.75/0.92/1.03 MB) |
 | `on-pre-tool-use.js` | Before Write/Edit | Pattern enforcer: checks against anti-patterns and regression rules. Can block. |
 | `on-post-tool-use.js` | After Read/Write/Edit | Tracks changes, saves diffs, scans imports, queues `file_access` events for daemon |
 | `on-pre-compact.js` | Before context compaction | Saves interim session data |
@@ -115,16 +116,22 @@ Triggers on every `Read` event (with 60s debounce per file). Queries the DB for 
 
 #### Learner Agent
 
-Triggers on `session_end`. Reads files changed in the last 2 hours and the last 8000 characters of the session transcript. Asks Claude to extract:
-- **Anti-patterns**: what went wrong and the correct solution
-- **Errors**: root cause, fix, prevention rule
-- **Architecture updates**: new understanding of file roles
+Triggers on `session_end`. Reads files changed in the last 2 hours and the last 8000 characters of the session transcript. Uses Sonnet as the analysis model. Classifies every finding by relevance:
 
-All findings are saved to the DB and used in future sessions.
+- **noise** — skipped, not written to DB
+- **maybe_relevant** — saved as low-confidence learning
+- **important** — saved with full context
+- **critical** — saved with `auto_block: true` (blocks future regressions)
+
+Extracts three types of knowledge:
+- **facts** — concrete observations (file roles, patterns used)
+- **insights** — broader learnings (anti-patterns, errors, architecture updates)
+
+Every write includes a mandatory `write_gate_reason` explaining why the entry was deemed worth storing. Superseded entries are linked via `superseded_by`.
 
 ### MCP Server
 
-A TypeScript MCP server exposes 22 tools for querying and updating the Cortex database. Used by Claude during active sessions.
+A TypeScript MCP server exposes 55 tools for querying and updating the Cortex database. Used by Claude during active sessions.
 
 ### Event Queue
 
@@ -144,6 +151,7 @@ cortex/
 ├── scripts/                    # Hook scripts (plain JS, zero npm deps)
 │   ├── ensure-db.js            # DB init + schema migration
 │   ├── on-session-start.js     # Context injection + daemon auto-start
+│   ├── on-user-prompt-submit.js # Context window size early-warning
 │   ├── on-session-end.js       # Session summary + session_end event
 │   ├── on-pre-tool-use.js      # Pattern enforcer (can block)
 │   ├── on-post-tool-use.js     # File tracking + file_access events
@@ -162,7 +170,7 @@ cortex/
 │
 ├── server/                     # MCP Server (TypeScript)
 │   └── src/
-│       ├── index.ts            # 22 MCP tools
+│       ├── index.ts            # 55 MCP tools
 │       ├── db.ts               # SQLite schema + connection
 │       └── modules/            # sessions, decisions, errors, learnings,
 │                               # conventions, dependencies, diffs, health,
@@ -187,36 +195,94 @@ cortex/
 
 ## MCP Tools
 
-22 tools available when the MCP server is running:
+55 tools available when the MCP server is running:
 
+**Memory & Context**
 | Tool | Description |
 |---|---|
-| `cortex_search` | Full-text search across sessions, decisions, errors, learnings |
+| `cortex_snapshot` | Full brain state: open items, recent sessions, decisions, learnings |
 | `cortex_get_context` | Relevant context for specific files |
 | `cortex_save_session` | Save/update a session |
 | `cortex_list_sessions` | List recent sessions |
-| `cortex_add_decision` | Log an architectural decision |
+| `cortex_search` | FTS5/BM25 full-text search across all data |
+| `cortex_cross_project_search` | Search across all projects in this Cortex DB |
+
+**Decisions**
+| Tool | Description |
+|---|---|
+| `cortex_add_decision` | Log an architectural decision with reasoning + examples |
 | `cortex_list_decisions` | List decisions by category |
+| `cortex_mark_decision_reviewed` | Confirm a decision is still current |
+
+**Errors & Learnings**
+| Tool | Description |
+|---|---|
 | `cortex_add_error` | Record an error with root cause, fix, prevention rule |
+| `cortex_update_error` | Update an existing error record |
 | `cortex_list_errors` | List known errors |
 | `cortex_add_learning` | Record an anti-pattern with optional auto-blocking regex |
-| `cortex_get_deps` | Dependency tree + impact analysis for a file |
-| `cortex_get_map` | Project architecture map |
-| `cortex_scan_project` | Scan project files into DB (auto-called by `cortex_update_map`) |
-| `cortex_update_map` | Re-scan project and update architecture map |
-| `cortex_index_docs` | Index CLAUDE.md gotchas and docs/ sections |
-| `cortex_get_hot_zones` | Most frequently changed files |
-| `cortex_get_file_history` | Complete history for a file |
-| `cortex_get_health` | Project health score with trend |
-| `cortex_get_unfinished` | Open/unresolved items |
-| `cortex_add_unfinished` | Track something for later |
-| `cortex_resolve_unfinished` | Mark an unfinished item as resolved |
-| `cortex_get_conventions` | Active conventions with violation counts |
-| `cortex_add_convention` | Add a convention with detection patterns |
-| `cortex_check_regression` | Check content against known regressions |
-| `cortex_suggest_claude_md` | Suggest CLAUDE.md updates from learnings |
+| `cortex_update_learning` | Update an existing learning |
+| `cortex_delete_learning` | Delete a learning by ID |
 | `cortex_list_learnings` | List anti-patterns sorted by occurrence |
+| `cortex_check_regression` | Check content against known regressions before editing |
+
+**Project Map & Files**
+| Tool | Description |
+|---|---|
+| `cortex_scan_project` | Scan project files into DB |
+| `cortex_update_map` | Re-scan project and update architecture map |
+| `cortex_get_map` | Project architecture map |
+| `cortex_get_deps` | Dependency tree + impact analysis for a file |
+| `cortex_get_file_history` | Complete history for a file |
+| `cortex_blame` | Full history with diffs, errors, decisions for a file |
+| `cortex_get_hot_zones` | Most frequently changed files |
+| `cortex_import_git_history` | Import git log to populate hot zones |
+| `cortex_index_docs` | Index CLAUDE.md gotchas and docs/ sections |
+
+**Tracking & TODOs**
+| Tool | Description |
+|---|---|
+| `cortex_add_unfinished` | Track something for later |
+| `cortex_get_unfinished` | Open/unresolved items |
+| `cortex_resolve_unfinished` | Mark an unfinished item as resolved |
+| `cortex_add_intent` | Store what you plan to do next session |
+| `cortex_snooze` | Set a reminder for a future session |
+
+**Conventions & Health**
+| Tool | Description |
+|---|---|
+| `cortex_add_convention` | Add a convention with detection patterns |
+| `cortex_get_conventions` | Active conventions with violation counts |
+| `cortex_suggest_claude_md` | Suggest CLAUDE.md updates from learnings |
+| `cortex_get_health` | Project health score with trend |
 | `cortex_get_stats` | DB statistics (counts per table) |
+| `cortex_get_access_stats` | Top accessed decisions, learnings, errors |
+| `cortex_run_pruning` | Manually run Ebbinghaus-based pruning |
+
+**Notes & Profile**
+| Tool | Description |
+|---|---|
+| `cortex_add_note` | Add a scratch pad note |
+| `cortex_list_notes` | List notes, optionally filtered |
+| `cortex_delete_note` | Delete a note by ID |
+| `cortex_onboard` | First-time setup: profile + anchors |
+| `cortex_update_profile` | Update user profile |
+| `cortex_get_profile` | Get user profile |
+| `cortex_add_anchor` | Pin a topic as permanent high-priority context |
+| `cortex_remove_anchor` | Remove an attention anchor |
+| `cortex_list_anchors` | List all anchors |
+
+**Intelligence**
+| Tool | Description |
+|---|---|
+| `cortex_dejavu` | Detect if task is similar to past sessions |
+| `cortex_check_blind_spots` | Find files not touched in recent sessions |
+| `cortex_get_mood` | Rolling session mood from last 7 sessions |
+| `cortex_forget` | Archive decisions/learnings/errors by topic |
+| `cortex_get_timeline` | Monthly activity timeline |
+| `cortex_compare_periods` | Compare activity between two date ranges |
+| `cortex_export` | Export all brain data as JSON or Markdown |
+| `cortex_set_project` | Set active project name for context tagging |
 
 ## Slash Commands
 
@@ -240,7 +306,7 @@ Install the `skills/` directory as a Claude Code plugin or copy individual skill
 
 SQLite at `.claude/cortex.db` — one file per project, created automatically on first hook run.
 
-12 tables: `sessions`, `decisions`, `errors`, `learnings`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `schema_version`.
+15 tables: `sessions`, `decisions`, `errors`, `learnings`, `facts`, `insights`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `notes`, `schema_version`.
 
 Uses `node:sqlite` (Node.js built-in, available since Node 22). Zero native dependencies, no compilation.
 
