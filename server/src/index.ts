@@ -25,6 +25,7 @@ TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
 - notes: add_note, list_notes, onboard, update_profile, get_profile
 - intelligence: dejavu, check_blind_spots, get_mood, forget, cross_project_search
 - stats: get_health, get_stats, get_access_stats, run_pruning, get_timeline
+- activity: activity_log, log_activity
 
 RULES: Always call cortex_check_regression before writing/editing files.
 Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;

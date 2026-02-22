@@ -1,6 +1,6 @@
 // server/src/modules/tool-registry.ts
 
-export type ToolCategory = 'memory' | 'decisions' | 'errors' | 'map' | 'tracking' | 'notes' | 'intelligence' | 'stats';
+export type ToolCategory = 'memory' | 'decisions' | 'errors' | 'map' | 'tracking' | 'notes' | 'intelligence' | 'stats' | 'activity';
 
 export const TOOL_CATEGORIES: Record<ToolCategory, string> = {
   memory: `## Memory & Context Tools
@@ -92,6 +92,13 @@ Advanced analysis and pattern detection.
 - **cortex_set_project** → Set active project name for context tagging.
 - **cortex_get_conventions** → List active coding conventions with violation counts.
 - **cortex_add_convention** → Add or update a coding convention.`,
+
+  activity: `## Activity Log Tools
+
+Use to audit and track what happened across sessions.
+
+- **cortex_activity_log** → List activity log entries. Filter by entity_type, entity_id, action, since date.
+- **cortex_log_activity** → Manually log an activity entry after important operations.`,
 };
 
 export const VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES) as ToolCategory[];

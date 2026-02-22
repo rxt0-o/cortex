@@ -32615,7 +32615,13 @@ Advanced analysis and pattern detection.
 - **cortex_suggest_claude_md** \u2192 Suggest CLAUDE.md updates based on new learnings.
 - **cortex_set_project** \u2192 Set active project name for context tagging.
 - **cortex_get_conventions** \u2192 List active coding conventions with violation counts.
-- **cortex_add_convention** \u2192 Add or update a coding convention.`
+- **cortex_add_convention** \u2192 Add or update a coding convention.`,
+  activity: `## Activity Log Tools
+
+Use to audit and track what happened across sessions.
+
+- **cortex_activity_log** \u2192 List activity log entries. Filter by entity_type, entity_id, action, since date.
+- **cortex_log_activity** \u2192 Manually log an activity entry after important operations.`
 };
 var VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES);
 function getToolGuidance(categories) {
@@ -32722,6 +32728,7 @@ TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
 - notes: add_note, list_notes, onboard, update_profile, get_profile
 - intelligence: dejavu, check_blind_spots, get_mood, forget, cross_project_search
 - stats: get_health, get_stats, get_access_stats, run_pruning, get_timeline
+- activity: activity_log, log_activity
 
 RULES: Always call cortex_check_regression before writing/editing files.
 Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;
