@@ -31330,6 +31330,104 @@ function summarizeFunctionChanges(diff) {
   return diff.filePath + " -> " + chunks.map((c) => c.functionName + "() +" + c.linesAdded + "/-" + c.linesRemoved).join(", ");
 }
 
+// dist/modules/tool-registry.js
+var TOOL_CATEGORIES = {
+  memory: `## Memory & Context Tools
+
+Use these at session start or when resuming work.
+
+- **cortex_snapshot** \u2192 Full brain state: open items, recent sessions, decisions, learnings. Call this first in complex sessions.
+- **cortex_get_context** \u2192 Relevant context for specific files. Pass file paths to get related decisions/errors/sessions.
+- **cortex_list_sessions** \u2192 Recent work history with summaries.
+- **cortex_search** \u2192 BM25/FTS5 full-text search across all stored data (sessions, decisions, errors, learnings).`,
+  decisions: `## Decisions Tools
+
+Use when making architectural or design choices.
+
+- **cortex_add_decision** \u2192 Log WHY a decision was made. Required fields: title, reasoning, category (architecture/convention/bugfix/feature/config/security).
+- **cortex_list_decisions** \u2192 Review existing decisions before making new ones. Check for duplicates.
+- **cortex_mark_decision_reviewed** \u2192 Confirm a decision is still current (resets stale flag).`,
+  errors: `## Errors & Learnings Tools
+
+Use when bugs occur or anti-patterns are identified.
+
+- **cortex_add_error** \u2192 Record a bug with root cause, fix description, and prevention rule.
+- **cortex_update_error** \u2192 Add fix description or prevention rule to existing error.
+- **cortex_list_errors** \u2192 List known errors, filter by severity or file.
+- **cortex_add_learning** \u2192 Record an anti-pattern with correct alternative. Set detection_regex for auto-blocking.
+- **cortex_update_learning** \u2192 Update existing learning (add regex, change severity, toggle auto_block).
+- **cortex_delete_learning** \u2192 Remove a learning entry.
+- **cortex_list_learnings** \u2192 Review known anti-patterns.
+- **cortex_check_regression** \u2192 Check code against known anti-patterns BEFORE writing/editing. ALWAYS call this first.`,
+  map: `## Project Map & Files Tools
+
+Use when exploring or navigating the codebase.
+
+- **cortex_scan_project** \u2192 Scan filesystem and populate architecture map. Run once to index project.
+- **cortex_get_map** \u2192 Architecture overview: modules, layers, files.
+- **cortex_update_map** \u2192 Re-scan and update map after structural changes.
+- **cortex_get_deps** \u2192 Dependency tree and impact analysis for a specific file.
+- **cortex_get_hot_zones** \u2192 Most frequently changed files \u2014 refactoring candidates.
+- **cortex_get_file_history** \u2192 Full history for a file: sessions, diffs, errors.
+- **cortex_blame** \u2192 Same as get_file_history with diff details.
+- **cortex_import_git_history** \u2192 Import git log to populate hot zones.
+- **cortex_index_docs** \u2192 Read CLAUDE.md and docs/ and store as searchable learnings.`,
+  tracking: `## Tracking & TODOs Tools
+
+Use when noting unfinished work or setting reminders.
+
+- **cortex_add_unfinished** \u2192 Track something that needs to be done later. Fields: description, priority (low/medium/high), context.
+- **cortex_get_unfinished** \u2192 List open/unresolved items.
+- **cortex_resolve_unfinished** \u2192 Mark an unfinished item as done.
+- **cortex_add_intent** \u2192 Store what you plan to do next session (shown at next SessionStart).
+- **cortex_snooze** \u2192 Schedule a future session reminder. Use relative (3d/1w) or ISO date.`,
+  notes: `## Notes & Profile Tools
+
+- **cortex_add_note** \u2192 Save scratch pad note with optional tags.
+- **cortex_list_notes** \u2192 List notes, filter by search term.
+- **cortex_delete_note** \u2192 Delete note by id.
+- **cortex_onboard** \u2192 First-time setup: name, role, working style, expertise, anchors.
+- **cortex_update_profile** \u2192 Update user profile fields.
+- **cortex_get_profile** \u2192 Get current user profile.
+- **cortex_export** \u2192 Export brain data as JSON or Markdown.`,
+  intelligence: `## Intelligence Tools
+
+Advanced analysis and pattern detection.
+
+- **cortex_dejavu** \u2192 Check if a task looks similar to past sessions (deja-vu detection). Pass task description.
+- **cortex_check_blind_spots** \u2192 Find project files not touched in recent sessions.
+- **cortex_get_mood** \u2192 Current system mood based on rolling average of last 7 sessions.
+- **cortex_forget** \u2192 Archive decisions/errors/learnings matching a topic keyword.
+- **cortex_cross_project_search** \u2192 Search across all projects in this Cortex DB.
+- **cortex_add_anchor** \u2192 Add attention anchor \u2014 topic that always gets priority context.
+- **cortex_remove_anchor** \u2192 Remove an attention anchor.
+- **cortex_list_anchors** \u2192 List all attention anchors.`,
+  stats: `## Health & Stats Tools
+
+- **cortex_get_health** \u2192 Project health score with metrics and trend.
+- **cortex_get_stats** \u2192 Overall counts: sessions, decisions, errors, files, learnings.
+- **cortex_get_access_stats** \u2192 Top accessed decisions/learnings/errors.
+- **cortex_run_pruning** \u2192 Manually run Ebbinghaus pruning \u2014 archives unused items.
+- **cortex_get_timeline** \u2192 Monthly activity timeline.
+- **cortex_compare_periods** \u2192 Compare activity between two date ranges.
+- **cortex_suggest_claude_md** \u2192 Suggest CLAUDE.md updates based on new learnings.
+- **cortex_set_project** \u2192 Set active project name for context tagging.
+- **cortex_get_conventions** \u2192 List active coding conventions with violation counts.
+- **cortex_add_convention** \u2192 Add or update a coding convention.`
+};
+var VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES);
+function getToolGuidance(categories) {
+  const results = [];
+  for (const cat of categories) {
+    if (!TOOL_CATEGORIES[cat]) {
+      throw new Error(`Unknown tool category: "${cat}". Valid: ${VALID_CATEGORIES.join(", ")}`);
+    }
+    results.push(TOOL_CATEGORIES[cat]);
+  }
+  return results.join("\n\n---\n\n");
+}
+var PRELOAD_GUIDANCE = getToolGuidance(["memory", "tracking"]);
+
 // dist/index.js
 function runAllPruning() {
   const d = runDecisionsPruning();
@@ -31341,55 +31439,20 @@ function runAllPruning() {
     errors_archived: e.errors_archived
   };
 }
-var CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code. It remembers sessions, tracks decisions, learns from mistakes, and maps project architecture across all projects.
+var CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
 
-WHEN TO USE CORTEX TOOLS:
+TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
+- memory: snapshot, get_context, list_sessions, search
+- decisions: add_decision, list_decisions, mark_decision_reviewed
+- errors: add_error, add_learning, check_regression, list_errors, list_learnings
+- map: scan_project, get_map, get_deps, get_hot_zones, file_history, blame
+- tracking: add_unfinished, get_unfinished, resolve_unfinished, add_intent, snooze
+- notes: add_note, list_notes, onboard, update_profile, get_profile
+- intelligence: dejavu, check_blind_spots, get_mood, forget, cross_project_search
+- stats: get_health, get_stats, get_access_stats, run_pruning, get_timeline
 
-**Memory & Context** (use at session start or when resuming work):
-- cortex_snapshot \u2192 get full brain state: open items, recent sessions, decisions, learnings
-- cortex_get_context \u2192 get relevant context for specific files being worked on
-- cortex_list_sessions \u2192 review past work history
-
-**Decisions** (use when making architectural or design choices):
-- cortex_add_decision \u2192 log WHY a decision was made (architecture, config, security, feature, bugfix, convention)
-- cortex_list_decisions \u2192 review existing decisions before making new ones
-- cortex_mark_decision_reviewed \u2192 confirm a decision is still current
-
-**Errors & Learnings** (use when bugs occur or patterns are identified):
-- cortex_add_error \u2192 record a bug with root cause and fix
-- cortex_add_learning \u2192 record an anti-pattern to avoid in future
-- cortex_check_regression \u2192 check code against known anti-patterns BEFORE writing/editing files
-- cortex_list_learnings \u2192 review known anti-patterns
-
-**Project Map & Files** (use when exploring or navigating codebase):
-- cortex_scan_project / cortex_update_map \u2192 index the codebase structure
-- cortex_get_map \u2192 get architecture overview
-- cortex_get_deps \u2192 get dependency tree for a file
-- cortex_get_file_history / cortex_blame \u2192 see full history of a file
-- cortex_get_hot_zones \u2192 find most frequently changed files
-
-**Search** (use when looking for past context, decisions, or patterns):
-- cortex_search \u2192 full-text search across all stored data
-
-**Tracking & TODOs** (use when noting unfinished work):
-- cortex_add_unfinished / cortex_get_unfinished \u2192 track open tasks
-- cortex_add_intent \u2192 store what you plan to do next session
-- cortex_snooze \u2192 set a reminder for future sessions
-
-**Health & Stats** (use for project overview):
-- cortex_get_health \u2192 project health score
-- cortex_get_stats \u2192 counts of all stored data
-
-**Profile & Conventions** (use for personalization and code standards):
-- cortex_onboard \u2192 first-time setup
-- cortex_add_convention \u2192 record coding conventions
-- cortex_get_conventions \u2192 list active conventions
-
-IMPORTANT RULES:
-- Always call cortex_check_regression before writing or editing code files
-- Call cortex_snapshot at the start of complex sessions to get full context
-- Log decisions with cortex_add_decision whenever a significant architectural choice is made
-- Record errors with cortex_add_error after fixing bugs so patterns are remembered`;
+RULES: Always call cortex_check_regression before writing/editing files.
+Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;
 var server = new McpServer({ name: "project-cortex", version: "0.1.0" }, { instructions: CORTEX_INSTRUCTIONS });
 server.tool("cortex_save_session", "Save or update a session with summary, changes, decisions, errors, and learnings", {
   session_id: external_exports3.string(),
@@ -32473,6 +32536,16 @@ server.tool("cortex_cross_project_search", "Search across all projects in this C
   } catch {
   }
   return { content: [{ type: "text", text: lines.join("\n") || "No cross-project results found." }] };
+});
+server.tool("cortex_load_tools", "Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.", {
+  categories: external_exports3.array(external_exports3.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(", ")}`)).describe('List of categories to load guidance for. Example: ["memory", "decisions"]')
+}, async ({ categories }) => {
+  try {
+    const guidance = getToolGuidance(categories);
+    return { content: [{ type: "text", text: guidance }] };
+  } catch (err) {
+    return { content: [{ type: "text", text: err.message }] };
+  }
 });
 async function main() {
   getDb();

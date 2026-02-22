@@ -14,6 +14,7 @@ import * as conventions from './modules/conventions.js';
 import * as health from './modules/health.js';
 import { parseDiff } from './analyzer/diff-extractor.js';
 import { summarizeFunctionChanges } from './analyzer/chunk-analyzer.js';
+import { getToolGuidance, VALID_CATEGORIES } from './modules/tool-registry.js';
 
 function runAllPruning(): { decisions_archived: number; learnings_archived: number; errors_archived: number } {
   const d = decisions.runDecisionsPruning();
@@ -26,56 +27,20 @@ function runAllPruning(): { decisions_archived: number; learnings_archived: numb
   };
 }
 
-const CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code. It remembers sessions, tracks decisions, learns from mistakes, and maps project architecture across all projects.
+const CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
 
-WHEN TO USE CORTEX TOOLS:
+TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
+- memory: snapshot, get_context, list_sessions, search
+- decisions: add_decision, list_decisions, mark_decision_reviewed
+- errors: add_error, add_learning, check_regression, list_errors, list_learnings
+- map: scan_project, get_map, get_deps, get_hot_zones, file_history, blame
+- tracking: add_unfinished, get_unfinished, resolve_unfinished, add_intent, snooze
+- notes: add_note, list_notes, onboard, update_profile, get_profile
+- intelligence: dejavu, check_blind_spots, get_mood, forget, cross_project_search
+- stats: get_health, get_stats, get_access_stats, run_pruning, get_timeline
 
-**Memory & Context** (use at session start or when resuming work):
-- cortex_snapshot → get full brain state: open items, recent sessions, decisions, learnings
-- cortex_get_context → get relevant context for specific files being worked on
-- cortex_list_sessions → review past work history
-
-**Decisions** (use when making architectural or design choices):
-- cortex_add_decision → log WHY a decision was made (architecture, config, security, feature, bugfix, convention)
-- cortex_list_decisions → review existing decisions before making new ones
-- cortex_mark_decision_reviewed → confirm a decision is still current
-
-**Errors & Learnings** (use when bugs occur or patterns are identified):
-- cortex_add_error → record a bug with root cause and fix
-- cortex_add_learning → record an anti-pattern to avoid in future
-- cortex_check_regression → check code against known anti-patterns BEFORE writing/editing files
-- cortex_list_learnings → review known anti-patterns
-
-**Project Map & Files** (use when exploring or navigating codebase):
-- cortex_scan_project / cortex_update_map → index the codebase structure
-- cortex_get_map → get architecture overview
-- cortex_get_deps → get dependency tree for a file
-- cortex_get_file_history / cortex_blame → see full history of a file
-- cortex_get_hot_zones → find most frequently changed files
-
-**Search** (use when looking for past context, decisions, or patterns):
-- cortex_search → full-text search across all stored data
-
-**Tracking & TODOs** (use when noting unfinished work):
-- cortex_add_unfinished / cortex_get_unfinished → track open tasks
-- cortex_add_intent → store what you plan to do next session
-- cortex_snooze → set a reminder for future sessions
-
-**Health & Stats** (use for project overview):
-- cortex_get_health → project health score
-- cortex_get_stats → counts of all stored data
-
-**Profile & Conventions** (use for personalization and code standards):
-- cortex_onboard → first-time setup
-- cortex_add_convention → record coding conventions
-- cortex_get_conventions → list active conventions
-
-IMPORTANT RULES:
-- Always call cortex_check_regression before writing or editing code files
-- Call cortex_snapshot at the start of complex sessions to get full context
-- Log decisions with cortex_add_decision whenever a significant architectural choice is made
-- Record errors with cortex_add_error after fixing bugs so patterns are remembered`;
-
+RULES: Always call cortex_check_regression before writing/editing files.
+Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;
 const server = new McpServer(
   { name: 'project-cortex', version: '0.1.0' },
   { instructions: CORTEX_INSTRUCTIONS },
@@ -1625,6 +1590,28 @@ server.tool(
 // ═══════════════════════════════════════════════════
 // STARTUP
 // ═══════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════
+// META
+// ═══════════════════════════════════════════════════
+
+server.tool(
+  'cortex_load_tools',
+  'Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.',
+  {
+    categories: z.array(
+      z.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(', ')}`)
+    ).describe('List of categories to load guidance for. Example: ["memory", "decisions"]'),
+  },
+  async ({ categories }) => {
+    try {
+      const guidance = getToolGuidance(categories);
+      return { content: [{ type: 'text' as const, text: guidance }] };
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: (err as Error).message }] };
+    }
+  }
+);
 
 async function main() {
   getDb();
