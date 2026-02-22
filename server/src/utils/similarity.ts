@@ -50,7 +50,7 @@ export interface SimilarMatch {
 export function findSimilar(
   query: string,
   corpus: { id: number; text: string }[],
-  threshold = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? '0.85')
+  threshold = (() => { const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? '0.85'); return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85; })()
 ): SimilarMatch[] {
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return [];
