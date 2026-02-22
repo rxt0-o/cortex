@@ -43,7 +43,7 @@ function ensureDaemonRunning(cwd) {
         return; // Daemon laeuft bereits
       } catch {
         // PID ist veraltet, loeschen
-        try { require('fs').unlinkSync(pidPath); } catch { /* ignore */ }
+        try { unlinkSync(pidPath); } catch { /* ignore */ }
       }
     }
 
@@ -92,6 +92,9 @@ function main() {
         `-- Cortex re-injected after compaction${activeProject ? ` [${activeProject}]` : ''} --`,
         ...parts,
         '---',
+        '',
+        '## Preloaded Tool Guidance',
+        PRELOADED_TOOL_GUIDANCE,
       ].join('\n');
 
       process.stdout.write(JSON.stringify({
