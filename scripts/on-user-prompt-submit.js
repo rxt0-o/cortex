@@ -4,21 +4,21 @@
 import { readFileSync, existsSync, statSync } from 'fs';
 
 // Schwellwerte in MB (Transcript-Größe als Proxy für Kontext-Auslastung)
-// Kalibriert: 559KB ≈ 50% → Vollauslastung ≈ 1.1MB
-// 70% ≈ 0.77MB, 85% ≈ 0.94MB, 95% ≈ 1.05MB
+// Rekalibriert: 1.1MB ≈ 57% gemessen → Vollauslastung ≈ 2.0MB
+// 70% ≈ 1.4MB, 85% ≈ 1.7MB, 95% ≈ 1.9MB
 const THRESHOLDS = [
   {
-    mb: 0.75,
+    mb: 1.4,
     level: 'warn',
     message: 'CORTEX: Kontext ~70% voll — jetzt offene Punkte mit cortex_add_unfinished sichern.',
   },
   {
-    mb: 0.92,
+    mb: 1.7,
     level: 'urgent',
     message: 'CORTEX WARNUNG: Kontext ~85% voll — cortex_save_session jetzt aufrufen, Compaction steht bevor.',
   },
   {
-    mb: 1.03,
+    mb: 1.9,
     level: 'critical',
     message: 'CORTEX KRITISCH: Kontext fast voll — sofort cortex_save_session aufrufen, dann /compact.',
   },
