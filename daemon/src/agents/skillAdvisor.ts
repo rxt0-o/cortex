@@ -156,14 +156,14 @@ Antworte NUR mit dem JSON-Schema. Leere Arrays sind OK.
   if (output.skill_updates) {
     for (const update of output.skill_updates) {
       if (!update.skill_path || !update.find || !update.replace) continue;
+      // Sicherheitscheck zuerst: nur skills/ Verzeichnis erlaubt
+      if (!update.skill_path.startsWith('skills/')) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: rejected path outside skills/: ${update.skill_path}\n`);
+        continue;
+      }
       const fullPath = join(projectPath, update.skill_path);
       if (!existsSync(fullPath)) {
         process.stderr.write(`[cortex-daemon] SkillAdvisor: skill not found: ${update.skill_path}\n`);
-        continue;
-      }
-      // Sicherheitscheck: nur skills/ Verzeichnis erlaubt
-      if (!update.skill_path.startsWith('skills/')) {
-        process.stderr.write(`[cortex-daemon] SkillAdvisor: rejected path outside skills/: ${update.skill_path}\n`);
         continue;
       }
       try {
