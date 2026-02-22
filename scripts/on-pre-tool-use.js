@@ -5,6 +5,29 @@ import { readFileSync, existsSync } from 'fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 
+// Hookify-kompatible cortex-pins.local.md laden
+function loadPinRules(claudeDir) {
+  const pinsFile = join(claudeDir, 'cortex-pins.local.md');
+  if (!existsSync(pinsFile)) return [];
+  try {
+    const content = readFileSync(pinsFile, 'utf-8');
+    const rules = [];
+    const blocks = content.split(/^---$/m).filter(Boolean);
+    for (let i = 0; i < blocks.length - 1; i += 2) {
+      const yaml = blocks[i].trim();
+      const message = blocks[i + 1]?.trim() ?? '';
+      const nameMatch = yaml.match(/^name:\s*(.+)$/m);
+      const patternMatch = yaml.match(/^pattern:\s*(.+)$/m);
+      const enabledMatch = yaml.match(/^enabled:\s*(.+)$/m);
+      if (!patternMatch) continue;
+      const enabled = enabledMatch ? enabledMatch[1].trim() !== 'false' : true;
+      if (!enabled) continue;
+      rules.push({ name: nameMatch?.[1]?.trim() ?? 'unnamed', pattern: patternMatch[1].trim(), message });
+    }
+    return rules;
+  } catch { return []; }
+}
+
 function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
   const { tool_name, tool_input, cwd } = input;
@@ -14,7 +37,26 @@ function main() {
   const content = tool_input.content || tool_input.new_string || '';
   if (!content) process.exit(0);
 
-  const dbPath = join(cwd, '.claude', 'cortex.db');
+  const claudeDir = join(cwd, '.claude');
+
+  // Pin-Rules aus cortex-pins.local.md (hookify-Format) — blockieren sofort
+  const pinRules = loadPinRules(claudeDir);
+  for (const rule of pinRules) {
+    try {
+      if (new RegExp(rule.pattern, 'i').test(content)) {
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason: `[CORTEX PIN] ${rule.name}\n${rule.message}`,
+          },
+        }));
+        process.exit(0);
+      }
+    } catch { /* ungültige Regex ignorieren */ }
+  }
+
+  const dbPath = join(claudeDir, 'cortex.db');
   if (!existsSync(dbPath)) process.exit(0);
 
   const db = new DatabaseSync(dbPath, { readOnly: true });
