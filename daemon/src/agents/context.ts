@@ -64,7 +64,7 @@ Zeile 3: Achtung: [1 wichtiger Gotcha wenn relevant, sonst weglassen]
 
 Antworte NUR mit diesen 3-4 Zeilen, kein Markdown, keine Erklaerungen.`;
 
-    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 30_000 });
+    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 30_000, agentName: 'context' });
 
     if (!result.success || !result.output.trim()) return;
 

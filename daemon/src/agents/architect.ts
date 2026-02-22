@@ -60,7 +60,7 @@ Antworte NUR mit diesem JSON (kein Markdown, kein Text davor/danach):
   "summary": "2-3 Saetze Gesamtueberblick"
 }`;
 
-    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000 });
+    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, agentName: 'architect' });
 
     if (!result.success || !result.output) {
       process.stderr.write(`[cortex-daemon] Architect: agent failed: ${result.error ?? 'no output'}\n`);

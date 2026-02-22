@@ -75,8 +75,13 @@ const LEARNER_SCHEMA = {
         required: ['observation', 'implication', 'relevance'],
       },
     },
+    resolved_unfinished_ids: {
+      type: 'array',
+      items: { type: 'number' },
+      description: 'IDs von Unfinished-Items die in dieser Session erledigt wurden',
+    },
   },
-  required: ['learnings', 'errors', 'architecture_updates', 'facts', 'insights'],
+  required: ['learnings', 'errors', 'architecture_updates', 'facts', 'insights', 'resolved_unfinished_ids'],
 };
 
 export async function runLearnerAgent(projectPath: string, transcriptPath?: string): Promise<void> {
@@ -108,6 +113,14 @@ export async function runLearnerAgent(projectPath: string, transcriptPath?: stri
       return;
     }
 
+    // Offene Unfinished-Items laden
+    const openUnfinished = db.prepare(`
+      SELECT id, description, context, priority FROM unfinished
+      WHERE resolved_at IS NULL AND (snooze_until IS NULL OR snooze_until < datetime('now'))
+      ORDER BY priority_score DESC
+      LIMIT 30
+    `).all() as Array<{ id: number; description: string; context: string | null; priority: string }>;
+
     const prompt = `<role>
 Du bist ein Code-Qualitaets-Analyst. Analysiere die letzte Coding-Session und extrahiere strukturiertes Wissen.
 </role>
@@ -119,6 +132,9 @@ ${recentFiles.map(f => `${f.path} [${f.file_type ?? 'unknown'}]`).join('\n') || 
 ${transcriptSample ? `<transcript>
 ${transcriptSample}
 </transcript>` : ''}
+${openUnfinished.length > 0 ? `<open_unfinished_items>
+${openUnfinished.map(u => `[id:${u.id}] [${u.priority}] ${u.description}${u.context ? ` (Kontext: ${u.context})` : ''}`).join('\n')}
+</open_unfinished_items>` : ''}
 </session_data>
 
 <write_gate>
@@ -145,6 +161,7 @@ Sei streng: lieber "noise" als falsch "important".
 3. Stabile Projektfakten -> facts (z.B. "Projekt nutzt SQLite WAL-Mode")
 4. Beobachtungen ohne Anti-Pattern -> insights (observation + implication)
 5. Neue Architektur-Zusammenhaenge -> architecture_updates
+6. Offene Unfinished-Items die in dieser Session abgeschlossen wurden -> resolved_unfinished_ids (Liste der IDs)
 
 Facts-Kategorien: "fact" (technische Tatsache) | "preference" (Nutzerpraeferenz) | "entity" (Person/System/Service) | "context" (Projektkontext)
 </analysis_targets>
@@ -196,10 +213,11 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
       "context": "scripts/",
       "relevance": "maybe_relevant"
     }
-  ]
+  ],
+  "resolved_unfinished_ids": [11, 42]
 }`;
 
-    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, jsonSchema: LEARNER_SCHEMA, model: 'claude-sonnet-4-6' });
+    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, jsonSchema: LEARNER_SCHEMA, model: 'claude-sonnet-4-6', agentName: 'learner' });
 
     if (!result.success || !result.output) {
       process.stderr.write(`[cortex-daemon] Learner: agent failed: ${result.error ?? 'no output'}\n`);
@@ -238,6 +256,7 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
         context?: string | null;
         relevance?: string;
       }>;
+      resolved_unfinished_ids?: number[];
     };
 
     try {
@@ -360,6 +379,20 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
             INSERT INTO insights (created_at, observation, implication, context, relevance)
             VALUES (?, ?, ?, ?, ?)
           `).run(ts, i.observation, i.implication, i.context ?? null, i.relevance ?? 'maybe_relevant');
+          saved++;
+        } catch { /* ignorieren */ }
+      }
+    }
+
+    // Unfinished-Items auflösen
+    if (analysis.resolved_unfinished_ids && openUnfinished.length > 0) {
+      const openIds = new Set(openUnfinished.map(u => u.id));
+      for (const id of analysis.resolved_unfinished_ids) {
+        if (!openIds.has(id)) continue; // nur bekannte IDs akzeptieren
+        try {
+          db.prepare(`UPDATE unfinished SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL`)
+            .run(ts, id);
+          process.stdout.write(`[cortex-daemon] Learner: resolved unfinished #${id}\n`);
           saved++;
         } catch { /* ignorieren */ }
       }

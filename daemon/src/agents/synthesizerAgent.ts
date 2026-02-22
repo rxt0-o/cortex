@@ -49,7 +49,7 @@ ${learningStr || '(none)'}
 
 Respond with ONLY the synthesis paragraph (no headers, no preamble).`;
 
-    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 60000 });
+    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 60000, agentName: 'synthesizer' });
 
     if (result.success && result.output?.trim()) {
       const synthesis = result.output.trim();

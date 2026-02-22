@@ -210,7 +210,7 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
   ],
   "resolved_unfinished_ids": [11, 42]
 }`;
-        const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, jsonSchema: LEARNER_SCHEMA, model: 'claude-sonnet-4-6' });
+        const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, jsonSchema: LEARNER_SCHEMA, model: 'claude-sonnet-4-6', agentName: 'learner' });
         if (!result.success || !result.output) {
             process.stderr.write(`[cortex-daemon] Learner: agent failed: ${result.error ?? 'no output'}\n`);
             return;

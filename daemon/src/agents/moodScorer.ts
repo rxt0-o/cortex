@@ -32,7 +32,7 @@ ${transcriptSample ? `\nSESSION EXCERPT:\n${transcriptSample.slice(0, 1000)}` : 
 
 Reply with ONLY the two lines above, nothing else.`;
 
-    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 30000 });
+    const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 30000, agentName: 'mood-scorer' });
 
     if (result.success && result.output) {
       const toneMatch = result.output.match(/TONE:\s*(\w+)/i);

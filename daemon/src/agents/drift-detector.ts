@@ -66,6 +66,7 @@ Be concise. Max 5 DRIFT lines.`;
       prompt,
       projectPath,
       timeoutMs: 60000,
+      agentName: 'drift-detector',
     });
 
     if (result.success && result.output) {
