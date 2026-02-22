@@ -114,12 +114,13 @@ MCP Server (55 Tools)
 
 ### Wichtige Tool-Gruppen
 ```
-Kontext holen:    cortex_snapshot, cortex_get_context, cortex_list_sessions
-Entscheidungen:   cortex_add_decision, cortex_list_decisions
-Fehler:           cortex_add_error, cortex_add_learning, cortex_check_regression
-Architektur:      cortex_get_map, cortex_get_deps, cortex_get_hot_zones
-Tracking:         cortex_add_unfinished, cortex_add_intent, cortex_snooze
-Suche:            cortex_search, cortex_cross_project_search
+cortex_load_tools(['memory'])       → snapshot, get_context, list_sessions, search
+cortex_load_tools(['decisions'])    → add/list/mark_reviewed
+cortex_load_tools(['errors'])       → add_error, add_learning, check_regression
+cortex_load_tools(['map'])          → scan, get_map, get_deps, hot_zones
+cortex_load_tools(['tracking'])     → add/get/resolve_unfinished, add_intent, snooze
+cortex_load_tools(['intelligence']) → dejavu, blind_spots, mood, forget
+cortex_load_tools(['stats'])        → get_health, get_stats, access_stats
 ```
 
 ---
