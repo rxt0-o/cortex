@@ -208,6 +208,9 @@ export function openDb(cwd) {
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 
+  // Backfill: NULL confidence → 0.7 (eliminiert COALESCE in allen Queries)
+  try { db.prepare(`UPDATE learnings SET confidence = 0.7 WHERE confidence IS NULL`).run(); } catch {}
+
   // FTS Backfill: bestehende Daten in FTS-Tabellen laden (nur wenn leer)
   try {
     const ftsCount = db.prepare('SELECT COUNT(*) as c FROM learnings_fts').get()?.c ?? 0;

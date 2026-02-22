@@ -268,8 +268,8 @@ function main() {
 
     // Low-confidence Learnings: User fragen ob behalten oder archivieren
     const lowConfidence = db.prepare(`
-      SELECT id, anti_pattern, correct_pattern, COALESCE(confidence, 0.7) as confidence
-      FROM learnings WHERE COALESCE(confidence, 0.7) <= 0.4 AND core_memory != 1 AND archived != 1
+      SELECT id, anti_pattern, correct_pattern, confidence as confidence
+      FROM learnings WHERE confidence <= 0.4 AND core_memory != 1 AND archived != 1
       ORDER BY confidence ASC LIMIT 3
     `).all();
 

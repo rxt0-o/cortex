@@ -68,20 +68,20 @@ function main() {
 
     // 1. Learnings with auto_block
     const learnings = db.prepare(`
-      SELECT id, anti_pattern, correct_pattern, detection_regex, severity, COALESCE(confidence, 0.7) as confidence, core_memory
+      SELECT id, anti_pattern, correct_pattern, detection_regex, severity, confidence as confidence, core_memory
       FROM learnings WHERE (auto_block = 1 OR core_memory = 1) AND archived != 1 AND detection_regex IS NOT NULL
     `).all();
 
     const filePath = tool_input.file_path || '';
     const isDocFile = /\.(md|txt|rst|adoc)$/i.test(filePath);
 
-    const boostStmt = db.prepare(`UPDATE learnings SET confidence = MIN(0.9, COALESCE(confidence, 0.7) + 0.1) WHERE id = ?`);
+    const boostStmt = db.prepare(`UPDATE learnings SET confidence = MIN(0.9, confidence + 0.1) WHERE id = ?`);
     for (const l of learnings) {
       if (isDocFile) continue; // Docs/Plans enthalten Code-Snippets — keine false positives
       try {
         if (new RegExp(l.detection_regex, 'gm').test(content)) {
           // Boost confidence on match (nicht für core_memory — die sind immer 0.9)
-          if (!l.core_memory) {
+          if (l.core_memory !== 1) {
             try { boostStmt.run(l.id); } catch { /* non-critical */ }
           }
           warnings.push({ type: 'anti-pattern', severity: l.severity,
