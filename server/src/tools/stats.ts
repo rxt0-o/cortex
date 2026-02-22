@@ -13,16 +13,44 @@ export function registerStatsTools(server: McpServer): void {
     'Get project health score with metrics and trend',
     {},
     async () => {
-      getDb();
+      const db = getDb();
       const snapshot = health.getLatestSnapshot();
       const history = health.getHealthHistory(7);
       const metrics = health.calculateHealth();
       const score = health.computeScore(metrics);
-  
+
+      // Agent-Erfolgsrate (letzte 30 Tage)
+      let agentHealth = null;
+      try {
+        agentHealth = db.prepare(`
+          SELECT agent_name,
+            COUNT(*) as runs,
+            ROUND(100.0 * SUM(success) / COUNT(*), 1) as success_rate_pct,
+            MAX(CASE WHEN success=0 THEN error_message END) as last_error
+          FROM agent_runs
+          WHERE started_at > datetime('now', '-30 days')
+          GROUP BY agent_name
+        `).all();
+      } catch { /* Tabelle noch nicht vorhanden */ }
+
+      // Session-Kosten (letzte 7 Sessions)
+      let costSummary = null;
+      try {
+        costSummary = db.prepare(`
+          SELECT
+            COUNT(*) as sessions_with_metrics,
+            ROUND(AVG(cost_usd), 4) as avg_cost_usd,
+            ROUND(SUM(cost_usd), 4) as total_cost_usd_7d,
+            ROUND(CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1) as cache_hit_rate_pct
+          FROM session_metrics
+          WHERE recorded_at > datetime('now', '-7 days')
+        `).get();
+      } catch { /* Tabelle noch nicht vorhanden */ }
+
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ currentScore: score, metrics, latestSnapshot: snapshot, recentHistory: history }, null, 2),
+          text: JSON.stringify({ currentScore: score, metrics, latestSnapshot: snapshot, recentHistory: history, agentHealth, costSummary }, null, 2),
         }],
       };
     }
@@ -195,6 +223,82 @@ export function registerStatsTools(server: McpServer): void {
             : '{"suggestions": [], "message": "No new suggestions — CLAUDE.md is up to date."}',
         }],
       };
+    }
+  );
+
+  server.tool(
+    'cortex_session_metrics',
+    'Show token usage and cost metrics per session',
+    {
+      limit: z.number().optional().default(10).describe('Number of recent sessions to show. input_examples: [5, 20]'),
+      aggregate: z.boolean().optional().default(false).describe('If true, return averages across all sessions instead of per-session list. input_examples: [true]'),
+    },
+    async ({ limit, aggregate }) => {
+      const db = getDb();
+      try {
+        if (aggregate) {
+          const row = db.prepare(`
+            SELECT
+              COUNT(*) as sessions,
+              ROUND(AVG(input_tokens), 0) as avg_input_tokens,
+              ROUND(AVG(output_tokens), 0) as avg_output_tokens,
+              ROUND(AVG(cache_read_tokens), 0) as avg_cache_read,
+              ROUND(AVG(cost_usd), 4) as avg_cost_usd,
+              ROUND(SUM(cost_usd), 4) as total_cost_usd,
+              ROUND(CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1) as cache_hit_rate_pct
+            FROM session_metrics
+          `).get();
+          return { content: [{ type: 'text' as const, text: JSON.stringify(row, null, 2) }] };
+        }
+        const rows = db.prepare(`
+          SELECT sm.*, s.summary
+          FROM session_metrics sm
+          LEFT JOIN sessions s ON s.id = sm.session_id
+          ORDER BY sm.recorded_at DESC
+          LIMIT ?
+        `).all(limit);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(rows, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'cortex_agent_status',
+    'Show daemon agent run history with success rates and errors',
+    {
+      limit: z.number().optional().default(20).describe('Max number of agent runs to return. input_examples: [10, 50]'),
+      agent_name: z.string().optional().describe('Filter by agent name (learner, architect, context, etc.). input_examples: ["learner", "architect"]'),
+    },
+    async ({ limit, agent_name }) => {
+      const db = getDb();
+      try {
+        const runs = agent_name
+          ? db.prepare(`SELECT * FROM agent_runs WHERE agent_name = ? ORDER BY started_at DESC LIMIT ?`).all(agent_name, limit)
+          : db.prepare(`SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?`).all(limit);
+
+        const summary = db.prepare(`
+          SELECT agent_name,
+            COUNT(*) as total_runs,
+            SUM(success) as successful,
+            ROUND(AVG(duration_ms), 0) as avg_duration_ms,
+            SUM(items_saved) as total_items_saved,
+            MAX(started_at) as last_run
+          FROM agent_runs
+          GROUP BY agent_name
+          ORDER BY last_run DESC
+        `).all();
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ summary, recent_runs: runs }, null, 2),
+          }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${e}` }] };
+      }
     }
   );
 
