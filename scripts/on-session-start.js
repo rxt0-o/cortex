@@ -31,6 +31,33 @@ Use when noting unfinished work or setting reminders.
 - **cortex_add_intent** → Store what you plan to do next session (shown at next SessionStart).
 - **cortex_snooze** → Schedule a future session reminder. Use relative (3d/1w) or ISO date.`;
 
+function ensureWatcherRunning(cwd) {
+  try {
+    const pidPath = join(cwd, '.claude', 'cortex-watcher.pid');
+    const watcherScript = join(__dirname, '..', 'daemon', 'dist', 'watcher.js');
+
+    if (!existsSync(watcherScript)) return; // Watcher nicht gebaut
+
+    if (existsSync(pidPath)) {
+      const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+      try {
+        process.kill(pid, 0);
+        return; // Watcher läuft bereits
+      } catch {
+        try { unlinkSync(pidPath); } catch { /* ignore */ }
+      }
+    }
+
+    const watcher = spawn('node', [watcherScript, '--project', cwd], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+      windowsHide: true,
+    });
+    watcher.unref();
+  } catch { /* nicht kritisch */ }
+}
+
 function ensureDaemonRunning(cwd) {
   try {
     const pidPath = join(cwd, '.claude', 'cortex-daemon.pid');
@@ -67,6 +94,7 @@ function main() {
 
   // Daemon starten (falls nicht bereits laufend — nicht bei Compaction)
   if (!isCompact) ensureDaemonRunning(cwd);
+  if (!isCompact) ensureWatcherRunning(cwd);
 
   const db = openDb(cwd);
 
