@@ -3,6 +3,81 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { DatabaseSync } from 'node:sqlite';
 
+export interface AgentContext {
+  recentDiffs: Array<{ file_path: string; created_at: string; diff_preview: string }>;
+  hotZones: Array<{ path: string; access_count: number }>;
+  sessionDelta: {
+    newErrors: number;
+    newLearnings: number;
+    newDecisions: number;
+  };
+  lastAgentRun: { agent_name: string; started_at: string; success: boolean } | null;
+}
+
+export function buildAgentContext(projectPath: string, agentName?: string): AgentContext {
+  const dbPath = join(projectPath, '.claude', 'cortex.db');
+  if (!existsSync(dbPath)) {
+    return { recentDiffs: [], hotZones: [], sessionDelta: { newErrors: 0, newLearnings: 0, newDecisions: 0 }, lastAgentRun: null };
+  }
+  try {
+    const db = new DatabaseSync(dbPath);
+
+    const recentDiffs = db.prepare(`
+      SELECT file_path, created_at, SUBSTR(diff_text, 1, 200) as diff_preview
+      FROM diffs
+      WHERE created_at > datetime('now', '-2 hours')
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).all() as Array<{ file_path: string; created_at: string; diff_preview: string }>;
+
+    const hotZones = db.prepare(`
+      SELECT path, access_count FROM project_files
+      WHERE access_count > 0
+      ORDER BY access_count DESC
+      LIMIT 5
+    `).all() as Array<{ path: string; access_count: number }>;
+
+    const newErrors = (db.prepare(`SELECT COUNT(*) as n FROM errors WHERE first_seen > datetime('now', '-2 hours')`).get() as any)?.n ?? 0;
+    const newLearnings = (db.prepare(`SELECT COUNT(*) as n FROM learnings WHERE created_at > datetime('now', '-2 hours') AND archived = 0`).get() as any)?.n ?? 0;
+    const newDecisions = (db.prepare(`SELECT COUNT(*) as n FROM decisions WHERE created_at > datetime('now', '-2 hours') AND archived != 1`).get() as any)?.n ?? 0;
+
+    const lastAgentRun = agentName
+      ? db.prepare(`SELECT agent_name, started_at, success FROM agent_runs WHERE agent_name = ? ORDER BY started_at DESC LIMIT 1`).get(agentName) as any
+      : null;
+
+    db.close();
+    return {
+      recentDiffs,
+      hotZones,
+      sessionDelta: { newErrors, newLearnings, newDecisions },
+      lastAgentRun,
+    };
+  } catch {
+    return { recentDiffs: [], hotZones: [], sessionDelta: { newErrors: 0, newLearnings: 0, newDecisions: 0 }, lastAgentRun: null };
+  }
+}
+
+export function formatAgentContext(ctx: AgentContext): string {
+  const parts: string[] = [];
+
+  if (ctx.recentDiffs.length > 0) {
+    parts.push(`<recent_diffs>\n${ctx.recentDiffs.map(d =>
+      `${d.file_path} [${d.created_at.slice(11, 16)}]: ${d.diff_preview?.replace(/\n/g, ' ').slice(0, 100) ?? ''}`
+    ).join('\n')}\n</recent_diffs>`);
+  }
+
+  if (ctx.hotZones.length > 0) {
+    parts.push(`<hot_zones>\n${ctx.hotZones.map(h => `${h.path} (${h.access_count}x)`).join('\n')}\n</hot_zones>`);
+  }
+
+  const { newErrors, newLearnings, newDecisions } = ctx.sessionDelta;
+  if (newErrors + newLearnings + newDecisions > 0) {
+    parts.push(`<session_delta>Letzte 2h: ${newErrors} neue Errors, ${newLearnings} neue Learnings, ${newDecisions} neue Decisions</session_delta>`);
+  }
+
+  return parts.length > 0 ? `\n<agent_context>\n${parts.join('\n')}\n</agent_context>\n` : '';
+}
+
 // Windows: claude.cmd im npm-Verzeichnis finden
 function findClaudeBin(): string {
   const candidates = [
