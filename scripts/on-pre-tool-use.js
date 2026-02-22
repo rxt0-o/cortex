@@ -12,7 +12,8 @@ function loadPinRules(claudeDir) {
   try {
     const content = readFileSync(pinsFile, 'utf-8');
     const rules = [];
-    const blocks = content.split(/^---$/m).filter(Boolean);
+    // blocks[0] ist immer vor dem ersten '---' (leer oder Preamble) — überspringen
+    const blocks = content.split(/^---$/m).slice(1);
     for (let i = 0; i < blocks.length - 1; i += 2) {
       const yaml = blocks[i].trim();
       const message = blocks[i + 1]?.trim() ?? '';
