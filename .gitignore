@@ -1,9 +1,20 @@
+# Cortex DB (pro Projekt)
+**/.claude/cortex.db
+**/.claude/cortex.db-shm
+**/.claude/cortex.db-wal
+**/.claude/cortex-daemon.pid
+**/.claude/cortex-events.jsonl
+**/.claude/cortex-feedback.jsonl
+
+# Dependencies
 node_modules/
+
+# TypeScript Build Output (außer pre-built dist/)
+# (dist/ wird committed für Zero-Build-Installation)
 dist/
-# Daemon dist wird getrackt (kein Build-Schritt beim Deployment noetig)
 !daemon/dist/
 !server/dist/
-*.db
-*.db-shm
-*.db-wal
+
+# Daemon dist wird getrackt (kein Build-Schritt beim Deployment noetig)
+
 package-lock.json
