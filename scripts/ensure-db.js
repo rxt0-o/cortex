@@ -190,6 +190,20 @@ export function openDb(cwd) {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_name)`,
     `CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at)`,
+    // Intelligence Layer
+    `CREATE TABLE IF NOT EXISTS work_patterns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pattern_type TEXT NOT NULL,
+      pattern_data TEXT NOT NULL,
+      confidence REAL DEFAULT 0.5,
+      occurrences INTEGER DEFAULT 1,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      decay_rate REAL DEFAULT 0.95
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_work_patterns_type ON work_patterns(pattern_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_work_patterns_confidence ON work_patterns(confidence)`,
+    `ALTER TABLE project_files ADD COLUMN cluster_id INTEGER`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 
