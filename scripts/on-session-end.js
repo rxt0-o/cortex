@@ -135,6 +135,27 @@ async function main() {
       const { runAutoRegex } = await import('./auto-regex.js');
       await runAutoRegex(cwd);
     } catch { /* non-critical */ }
+
+    // OTEL-Metriken speichern (graceful — kein Fehler wenn OTEL nicht aktiv)
+    try {
+      const otelMetrics = await readOtelMetrics(session_id);
+      if (otelMetrics) {
+        db.prepare(`
+          INSERT INTO session_metrics
+            (session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, recorded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          session_id,
+          otelMetrics.inputTokens,
+          otelMetrics.outputTokens,
+          otelMetrics.cacheReadTokens,
+          otelMetrics.cacheWriteTokens,
+          otelMetrics.costUsd,
+          otelMetrics.durationMs,
+          new Date().toISOString()
+        );
+      }
+    } catch { /* non-critical */ }
   } finally {
     db.close();
   }
@@ -207,6 +228,40 @@ TAGS: <comma-separated tags from: bugfix,feature,refactor,security,database,fron
   } catch {
     return null;
   }
+}
+
+async function readOtelMetrics(sessionId) {
+  try {
+    const otelPath = process.env.OTEL_LOG_FILE
+      || join(process.env.HOME || process.env.USERPROFILE || '', '.claude', 'otel-spans.jsonl');
+
+    if (!existsSync(otelPath)) return null;
+
+    let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
+    let costUsd = 0, durationMs = 0;
+    let found = false;
+
+    const rl = createInterface({ input: createReadStream(otelPath, { encoding: 'utf-8' }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const span = JSON.parse(line);
+        const attrs = span.attributes || span.resource?.attributes || {};
+        const spanSession = attrs['session.id'] || attrs['claude.session_id'] || span.session_id;
+        if (spanSession !== sessionId) continue;
+        found = true;
+        inputTokens      += Number(attrs['llm.usage.prompt_tokens']                 || attrs['input_tokens']       || 0);
+        outputTokens     += Number(attrs['llm.usage.completion_tokens']             || attrs['output_tokens']      || 0);
+        cacheReadTokens  += Number(attrs['llm.usage.cache_read_input_tokens']       || attrs['cache_read_tokens']  || 0);
+        cacheWriteTokens += Number(attrs['llm.usage.cache_creation_input_tokens']  || attrs['cache_write_tokens'] || 0);
+        costUsd          += Number(attrs['llm.usage.cost_usd']                      || attrs['cost_usd']           || 0);
+        durationMs       += Number(span.duration_ms || 0);
+      } catch { /* skip bad lines */ }
+    }
+
+    if (!found) return null;
+    return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, durationMs };
+  } catch { return null; }
 }
 
 main().catch(err => { process.stderr.write(`Cortex SessionEnd: ${err.message}\n`); process.exit(0); });
