@@ -42,7 +42,7 @@ export function listActivity(filter: ActivityFilter = {}): unknown[] {
   const params: (string | number)[] = [];
 
   if (filter.entity_type) { conditions.push('entity_type=?'); params.push(filter.entity_type); }
-  if (filter.entity_id) { conditions.push('entity_id=?'); params.push(filter.entity_id); }
+  if (filter.entity_id != null) { conditions.push('entity_id=?'); params.push(filter.entity_id); }
   if (filter.action) { conditions.push('action=?'); params.push(filter.action); }
   if (filter.since) { conditions.push('created_at >= ?'); params.push(filter.since); }
 
