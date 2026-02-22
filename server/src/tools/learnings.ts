@@ -92,6 +92,21 @@ export function registerLearningTools(server: McpServer): void {
   );
 
   server.tool(
+    'cortex_share_learning',
+    'Mark a learning as shared across projects',
+    {
+      id: z.number().describe('Learning ID to share'),
+      shared: z.boolean().optional().default(true).describe('Set to false to unshare'),
+    },
+    async ({ id, shared }) => {
+      const db = getDb();
+      const val = shared ? 1 : 0;
+      db.prepare('UPDATE learnings SET shared = ? WHERE id = ?').run(val, id);
+      return { content: [{ type: 'text' as const, text: `Learning #${id} ${shared ? 'shared' : 'unshared'}` }] };
+    }
+  );
+
+  server.tool(
     'cortex_check_regression',
     'Check if content would introduce a known regression or anti-pattern',
     {

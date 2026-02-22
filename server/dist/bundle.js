@@ -30559,6 +30559,9 @@ function addLearning(input) {
     INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
   `).run(input.session_id ?? null, now(), input.anti_pattern, input.correct_pattern, input.detection_regex ?? null, input.context, input.severity ?? "medium", input.auto_block ? 1 : 0);
+  if (input.severity === "high") {
+    db2.prepare("UPDATE learnings SET shared = 1 WHERE id = ?").run(Number(result.lastInsertRowid));
+  }
   const learning = getLearning(Number(result.lastInsertRowid));
   if (similar.length > 0) {
     const top = similar[0];
@@ -31439,6 +31442,15 @@ function registerLearningTools(server2) {
     }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
+  server2.tool("cortex_share_learning", "Mark a learning as shared across projects", {
+    id: external_exports3.number().describe("Learning ID to share"),
+    shared: external_exports3.boolean().optional().default(true).describe("Set to false to unshare")
+  }, async ({ id, shared }) => {
+    const db2 = getDb();
+    const val = shared ? 1 : 0;
+    db2.prepare("UPDATE learnings SET shared = ? WHERE id = ?").run(val, id);
+    return { content: [{ type: "text", text: `Learning #${id} ${shared ? "shared" : "unshared"}` }] };
+  });
   server2.tool("cortex_check_regression", "Check if content would introduce a known regression or anti-pattern", {
     file_path: external_exports3.string(),
     content: external_exports3.string()
@@ -32162,8 +32174,11 @@ ${unique.join("\n")}` : "No similar sessions found." }] };
     } catch {
     }
     try {
-      const learnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
-      for (const l of learnings)
+      const sharedLearnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE shared=1 AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
+      for (const l of sharedLearnings)
+        lines.push(`[SHARED LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
+      const otherLearnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (shared IS NULL OR shared=0) AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
+      for (const l of otherLearnings)
         lines.push(`[LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
     } catch {
     }

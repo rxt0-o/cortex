@@ -57,6 +57,11 @@ export function addLearning(input: AddLearningInput): AddLearningResult {
     input.auto_block ? 1 : 0
   );
 
+  // Auto-share high-severity learnings
+  if (input.severity === 'high') {
+    db.prepare('UPDATE learnings SET shared = 1 WHERE id = ?').run(Number(result.lastInsertRowid));
+  }
+
   const learning = getLearning(Number(result.lastInsertRowid))!;
 
   if (similar.length > 0) {

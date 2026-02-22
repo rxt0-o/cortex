@@ -159,24 +159,32 @@ function main() {
       if (status) changedFiles = status.split('\n');
     } catch { /* not a git repo */ }
 
-    // 1b. Intent-Prediction (vom PatternAgent pre-computed)
+    // 1b. Goal Suggestion (Intent-Prediction + Top-Unfinished Fallback)
     try {
       const intentRow = db.prepare(`SELECT value FROM meta WHERE key='last_intent_prediction'`).get();
+      let goalShown = false;
+
       if (intentRow?.value) {
         const intent = JSON.parse(intentRow.value);
-        if (intent.predicted_task && intent.confidence > 0.2) {
+        if (intent.predicted_task && intent.confidence > 0.4) {
           const confPct = Math.round((intent.confidence ?? 0) * 100);
-          parts.push(`PREDICTED TASK: ${intent.predicted_task} (${confPct}% confident)`);
-          if (intent.suggested_next_step) parts.push(`  -> Suggested: ${intent.suggested_next_step}`);
+          parts.push(`SUGGESTED GOAL: ${intent.predicted_task} (${confPct}% match)`);
+          if (intent.suggested_next_step) parts.push(`  -> Next step: ${intent.suggested_next_step}`);
           if (intent.relevant_files?.length > 0) parts.push(`  -> Files: ${intent.relevant_files.slice(0, 5).join(', ')}`);
-          const refs = [];
-          if (intent.relevant_decision_ids?.length > 0) refs.push(`Decision ${intent.relevant_decision_ids.map(id => '#' + id).join(', ')}`);
-          if (intent.relevant_error_ids?.length > 0) refs.push(`Error ${intent.relevant_error_ids.map(id => '#' + id).join(', ')}`);
-          if (refs.length > 0) parts.push(`  -> Relevant: ${refs.join(', ')}`);
-          parts.push('');
+          goalShown = true;
         }
       }
-    } catch { /* keine Prediction vorhanden */ }
+
+      // Fallback: Top-1 High-Priority Unfinished als Goal
+      if (!goalShown) {
+        const topItem = db.prepare(`SELECT description FROM unfinished WHERE resolved_at IS NULL AND context != 'intent' ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at ASC LIMIT 1`).get();
+        if (topItem) {
+          parts.push(`SUGGESTED GOAL: ${topItem.description}`);
+        }
+      }
+
+      parts.push('');
+    } catch { /* keine Prediction/Goal vorhanden */ }
 
     // 2. Recent sessions
     const recentSessions = db.prepare(`

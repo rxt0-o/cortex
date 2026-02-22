@@ -7,9 +7,13 @@ export function addLearning(input) {
     const corpus = existing.map(e => ({ id: e.id, text: e.anti_pattern + ' ' + e.correct_pattern }));
     const similar = findSimilar(input.anti_pattern + ' ' + input.correct_pattern, corpus);
     const result = db.prepare(`
-    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
   `).run(input.session_id ?? null, now(), input.anti_pattern, input.correct_pattern, input.detection_regex ?? null, input.context, input.severity ?? 'medium', input.auto_block ? 1 : 0);
+    // Auto-share high-severity learnings
+    if (input.severity === 'high') {
+        db.prepare('UPDATE learnings SET shared = 1 WHERE id = ?').run(Number(result.lastInsertRowid));
+    }
     const learning = getLearning(Number(result.lastInsertRowid));
     if (similar.length > 0) {
         const top = similar[0];
@@ -110,6 +114,10 @@ export function updateLearning(input) {
     if (input.auto_block !== undefined) {
         sets.push('auto_block = ?');
         values.push(input.auto_block ? 1 : 0);
+    }
+    if (input.confidence !== undefined) {
+        sets.push('confidence = ?');
+        values.push(input.confidence);
     }
     if (sets.length === 0)
         return getLearning(input.id);

@@ -44,6 +44,7 @@ export function registerLearningTools(server) {
         context: z.string().optional(),
         severity: z.enum(['low', 'medium', 'high']).optional(),
         auto_block: z.boolean().optional(),
+        confidence: z.number().min(0.3).max(0.9).optional().describe('Confidence score (0.3-0.9). Higher = more trusted.'),
     }, async (input) => {
         getDb();
         const learning = learnings.updateLearning(input);
@@ -63,6 +64,15 @@ export function registerLearningTools(server) {
             }
         }
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    });
+    server.tool('cortex_share_learning', 'Mark a learning as shared across projects', {
+        id: z.number().describe('Learning ID to share'),
+        shared: z.boolean().optional().default(true).describe('Set to false to unshare'),
+    }, async ({ id, shared }) => {
+        const db = getDb();
+        const val = shared ? 1 : 0;
+        db.prepare('UPDATE learnings SET shared = ? WHERE id = ?').run(val, id);
+        return { content: [{ type: 'text', text: `Learning #${id} ${shared ? 'shared' : 'unshared'}` }] };
     });
     server.tool('cortex_check_regression', 'Check if content would introduce a known regression or anti-pattern', {
         file_path: z.string(),

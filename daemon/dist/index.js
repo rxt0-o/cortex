@@ -11,6 +11,7 @@ import { runMoodScorerAgent } from './agents/moodScorer.js';
 import { runSkillAdvisorAgent } from './agents/skillAdvisor.js';
 import { runPatternAgent } from './agents/patternAgent.js';
 import { runBootstrapAgent } from './agents/bootstrap.js';
+import { runCleanupAgent } from './agents/cleanupAgent.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf('--project');
@@ -104,6 +105,9 @@ setInterval(() => {
             });
             runArchitectAgent(projectPath, 'post_session').catch(err => {
                 process.stderr.write(`[cortex-daemon] Architect (post-session) error: ${err}\n`);
+            });
+            runCleanupAgent(projectPath).catch(err => {
+                process.stderr.write(`[cortex-daemon] Cleanup error: ${err}\n`);
             });
             processed.push(event);
         }

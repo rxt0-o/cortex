@@ -318,8 +318,12 @@ export function registerIntelligenceTools(server) {
         }
         catch { }
         try {
-            const learnings = db.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
-            for (const l of learnings)
+            // Shared learnings first
+            const sharedLearnings = db.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE shared=1 AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
+            for (const l of sharedLearnings)
+                lines.push(`[SHARED LEARNING] ${l.anti_pattern} → ${l.correct_pattern}`);
+            const otherLearnings = db.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (shared IS NULL OR shared=0) AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
+            for (const l of otherLearnings)
                 lines.push(`[LEARNING] ${l.anti_pattern} → ${l.correct_pattern}`);
         }
         catch { }

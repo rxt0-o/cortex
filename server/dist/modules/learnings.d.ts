@@ -12,6 +12,7 @@ export interface Learning {
     access_count: number;
     last_accessed: string | null;
     archived_at: string | null;
+    confidence: number;
 }
 export interface AddLearningInput {
     session_id?: string;
@@ -47,6 +48,7 @@ export interface UpdateLearningInput {
     context?: string;
     severity?: string;
     auto_block?: boolean;
+    confidence?: number;
 }
 export declare function updateLearning(input: UpdateLearningInput): Learning | null;
 export declare function deleteLearning(id: number): boolean;
