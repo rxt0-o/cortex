@@ -98,6 +98,14 @@ function main() {
 
   const db = openDb(cwd);
 
+  // Auto-Bootstrap: Flag setzen wenn DB quasi leer
+  try {
+    const filesTracked = db.prepare(`SELECT COUNT(*) as c FROM project_files`).get()?.c ?? 0;
+    if (filesTracked < 10) {
+      db.prepare(`INSERT INTO meta (key, value) VALUES ('needs_bootstrap', 'true') ON CONFLICT(key) DO NOTHING`).run();
+    }
+  } catch { /* ignore */ }
+
   // Active project from meta (optional)
   let activeProject = '';
   try { activeProject = db.prepare(`SELECT value FROM meta WHERE key='active_project'`).get()?.value || ''; } catch {}
@@ -272,6 +280,15 @@ function main() {
         parts.push('WEEKLY DIGEST:');
         parts.push(`  ${s7} sessions | ${f7} files | ${fix7} bugs fixed${crit > 0 ? ' | ' + crit + ' critical open' : ''}`);
         db.prepare(`INSERT INTO meta (key,value) VALUES ('last_weekly_digest',datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run();
+      }
+    } catch {}
+
+    // Bootstrap-Hinweis
+    try {
+      const needsBootstrap = db.prepare(`SELECT value FROM meta WHERE key='needs_bootstrap'`).get();
+      if (needsBootstrap) {
+        parts.push('');
+        parts.push('BOOTSTRAP: Erstmalige Indexierung laeuft im Hintergrund...');
       }
     } catch {}
 
