@@ -17,6 +17,7 @@ if (projectIdx === -1 || !args[projectIdx + 1]) {
 }
 const projectPath = args[projectIdx + 1];
 const pidPath = join(projectPath, '.claude', 'cortex-daemon.pid');
+const heartbeatPath = join(projectPath, '.claude', 'cortex-daemon.heartbeat');
 // PID-File schreiben
 try {
     writeFileSync(pidPath, String(process.pid), 'utf-8');
@@ -26,11 +27,26 @@ catch (err) {
     process.stderr.write(`[cortex-daemon] Could not write PID file: ${err}\n`);
     process.exit(1);
 }
+// Heartbeat sofort + alle 30s schreiben
+try {
+    writeFileSync(heartbeatPath, String(Date.now()), 'utf-8');
+}
+catch { /* ignore */ }
+setInterval(() => {
+    try {
+        writeFileSync(heartbeatPath, String(Date.now()), 'utf-8');
+    }
+    catch { /* ignore */ }
+}, 30_000);
 function cleanup() {
     try {
         unlinkSync(pidPath);
     }
     catch { /* bereits geloescht */ }
+    try {
+        unlinkSync(heartbeatPath);
+    }
+    catch { /* ignore */ }
     process.stdout.write('[cortex-daemon] Stopped\n');
 }
 process.on('SIGTERM', () => { cleanup(); process.exit(0); });

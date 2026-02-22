@@ -55,6 +55,8 @@ export async function runClaudeAgent(opts) {
                 env,
                 // Windows: .cmd Dateien brauchen shell: true
                 shell: claudeBin.endsWith('.cmd'),
+                // Windows: verhindert dass cmd.exe-Fenster aufpoppt
+                windowsHide: true,
             });
             proc.stdout.on('data', (d) => { output += d.toString(); });
             proc.stderr.on('data', (d) => { errOutput += d.toString(); });
