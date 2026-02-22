@@ -8,6 +8,7 @@ import { runSynthesizerAgent } from './agents/synthesizerAgent.js';
 import { runSerendipityAgent } from './agents/serendipityAgent.js';
 import { runDriftDetectorAgent } from './agents/drift-detector.js';
 import { runMoodScorerAgent } from './agents/moodScorer.js';
+import { runSkillAdvisorAgent } from './agents/skillAdvisor.js';
 
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
@@ -80,6 +81,9 @@ setInterval(() => {
       });
       runMoodScorerAgent(projectPath, event.session_id, event.transcript_path).catch(err => {
         process.stderr.write(`[cortex-daemon] MoodScorer error: ${err}\n`);
+      });
+      runSkillAdvisorAgent(projectPath, event.transcript_path).catch(err => {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor error: ${err}\n`);
       });
       processed.push(event);
     }
