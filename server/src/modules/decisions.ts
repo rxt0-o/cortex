@@ -1,4 +1,5 @@
 import { getDb, now, toJson, parseJson, type SQLInputValue } from '../db.js';
+import { findSimilar } from '../utils/similarity.js';
 
 export interface Decision {
   id: number;
@@ -31,8 +32,21 @@ export interface AddDecisionInput {
   confidence?: string;
 }
 
-export function addDecision(input: AddDecisionInput): Decision {
+export interface AddDecisionResult {
+  decision: Decision;
+  duplicate?: { id: number; score: number; title: string };
+}
+
+export function addDecision(input: AddDecisionInput): AddDecisionResult {
   const db = getDb();
+
+  // Duplikat-Check vor INSERT
+  const existing = db.prepare(
+    'SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200'
+  ).all() as { id: number; title: string; reasoning: string }[];
+  const corpus = existing.map(e => ({ id: e.id, text: e.title + ' ' + e.reasoning }));
+  const similar = findSimilar(input.title + ' ' + input.reasoning, corpus);
+
   const result = db.prepare(`
     INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -47,7 +61,22 @@ export function addDecision(input: AddDecisionInput): Decision {
     input.confidence ?? 'high'
   );
 
-  return getDecision(Number(result.lastInsertRowid))!;
+  const decision = getDecision(Number(result.lastInsertRowid))!;
+
+  if (similar.length > 0) {
+    const top = similar[0];
+    const topEntry = existing.find(e => e.id === top.id);
+    return {
+      decision,
+      duplicate: {
+        id: top.id,
+        score: Math.round(top.score * 100),
+        title: topEntry?.title ?? '',
+      },
+    };
+  }
+
+  return { decision };
 }
 
 export function getDecision(id: number): Decision | null {

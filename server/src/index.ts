@@ -246,8 +246,13 @@ server.tool(
   },
   async (input) => {
     getDb();
-    const decision = decisions.addDecision(input);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(decision, null, 2) }] };
+    const { decision, duplicate } = decisions.addDecision(input);
+    let text = 'Decision saved (id: ' + decision.id + ')';
+    if (duplicate) {
+      text += '\nWarning: Possible duplicate of Decision #' + duplicate.id +
+        ' (' + duplicate.score + '% similar): "' + duplicate.title + '"';
+    }
+    return { content: [{ type: 'text' as const, text }] };
   }
 );
 
