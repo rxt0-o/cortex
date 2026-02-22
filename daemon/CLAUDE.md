@@ -62,4 +62,6 @@ spawn(claudeCmd, [...], { env });
 | Architect | claude-haiku-4-5 | Schnell, Struktur-Mapping |
 | Context | claude-haiku-4-5 | Debounced, viele Calls |
 | DriftDetector | claude-haiku-4-5 | Einfacher Vergleich |
+| Synthesizer | claude-haiku-4-5 | Memory-Verdichtung alle 10 Sessions |
+| Serendipity | claude-haiku-4-5 | Zufällige alte Erkenntnisse surfacen |
 | MoodScorer | claude-haiku-4-5 | Sentimentklassifikation |

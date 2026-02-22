@@ -80,7 +80,7 @@ Datei: `.claude/cortex-events.jsonl` (append-only, ein JSON-Objekt pro Zeile)
 
 ```jsonl
 {"type":"file_access","file":"/abs/path/file.ts","session_id":"abc","ts":"2026-02-22T10:00:00Z"}
-{"type":"session_end","session_id":"abc","transcript_path":"/path/.claude/projects/.../transcript.jsonl","session_id":"abc","ts":"2026-02-22T11:00:00Z"}
+{"type":"session_end","session_id":"abc","transcript_path":"/path/.claude/projects/.../transcript.jsonl","ts":"2026-02-22T11:00:00Z"}
 ```
 
 Daemon markiert verarbeitete Events mit `"processed":true` — Datei wird nicht geleert.
