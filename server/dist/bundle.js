@@ -30556,8 +30556,8 @@ function addLearning(input) {
   const corpus = existing.map((e) => ({ id: e.id, text: e.anti_pattern + " " + e.correct_pattern }));
   const similar = findSimilar(input.anti_pattern + " " + input.correct_pattern, corpus);
   const result = db2.prepare(`
-    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
   `).run(input.session_id ?? null, now(), input.anti_pattern, input.correct_pattern, input.detection_regex ?? null, input.context, input.severity ?? "medium", input.auto_block ? 1 : 0);
   const learning = getLearning(Number(result.lastInsertRowid));
   if (similar.length > 0) {
@@ -30635,6 +30635,10 @@ function updateLearning(input) {
   if (input.auto_block !== void 0) {
     sets.push("auto_block = ?");
     values.push(input.auto_block ? 1 : 0);
+  }
+  if (input.confidence !== void 0) {
+    sets.push("confidence = ?");
+    values.push(input.confidence);
   }
   if (sets.length === 0)
     return getLearning(input.id);
@@ -31413,7 +31417,8 @@ function registerLearningTools(server2) {
     detection_regex: external_exports3.string().nullable().optional(),
     context: external_exports3.string().optional(),
     severity: external_exports3.enum(["low", "medium", "high"]).optional(),
-    auto_block: external_exports3.boolean().optional()
+    auto_block: external_exports3.boolean().optional(),
+    confidence: external_exports3.number().min(0.3).max(0.9).optional().describe("Confidence score (0.3-0.9). Higher = more trusted.")
   }, async (input) => {
     getDb();
     const learning = updateLearning(input);
