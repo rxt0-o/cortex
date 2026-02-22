@@ -26,7 +26,15 @@ export interface AddDecisionInput {
     files_affected?: string[];
     confidence?: string;
 }
-export declare function addDecision(input: AddDecisionInput): Decision;
+export interface AddDecisionResult {
+    decision: Decision;
+    duplicate?: {
+        id: number;
+        score: number;
+        title: string;
+    };
+}
+export declare function addDecision(input: AddDecisionInput): AddDecisionResult;
 export declare function getDecision(id: number): Decision | null;
 export declare function listDecisions(options?: {
     category?: string;

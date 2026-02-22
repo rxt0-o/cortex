@@ -1,0 +1,1 @@
+{"version":3,"file":"similarity.d.ts","sourceRoot":"","sources":["../../src/utils/similarity.ts"],"names":[],"mappings":"AAsCA,MAAM,WAAW,YAAY;IAC3B,EAAE,EAAE,MAAM,CAAC;IACX,KAAK,EAAE,MAAM,CAAC;CACf;AAED;;;;;GAKG;AACH,wBAAgB,WAAW,CACzB,KAAK,EAAE,MAAM,EACb,MAAM,EAAE;IAAE,EAAE,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,CAAA;CAAE,EAAE,EACtC,SAAS,SAAmJ,GAC3J,YAAY,EAAE,CA6BhB"}

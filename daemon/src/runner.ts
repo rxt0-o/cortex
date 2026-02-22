@@ -22,6 +22,8 @@ export interface RunnerOptions {
   prompt: string;
   projectPath: string;
   timeoutMs?: number;
+  jsonSchema?: object;
+  model?: string;
 }
 
 export interface RunnerResult {
@@ -53,11 +55,16 @@ export async function runClaudeAgent(opts: RunnerOptions): Promise<RunnerResult>
       const env = { ...process.env };
       delete env['CLAUDECODE'];
 
-      const proc = spawn(claudeBin, [
-        '-p', opts.prompt,
-        '--output-format', 'text',
-        '--dangerously-skip-permissions',
-      ], {
+      const args = ['-p', opts.prompt, '--dangerously-skip-permissions'];
+      if (opts.model) args.push('--model', opts.model);
+      if (opts.jsonSchema) {
+        args.push('--output-format', 'json');
+        args.push('--json-schema', JSON.stringify(opts.jsonSchema));
+      } else {
+        args.push('--output-format', 'text');
+      }
+
+      const proc = spawn(claudeBin, args, {
         cwd: opts.projectPath,
         stdio: ['ignore', 'pipe', 'pipe'],
         env,

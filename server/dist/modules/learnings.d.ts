@@ -22,7 +22,15 @@ export interface AddLearningInput {
     severity?: string;
     auto_block?: boolean;
 }
-export declare function addLearning(input: AddLearningInput): Learning;
+export interface AddLearningResult {
+    learning: Learning;
+    duplicate?: {
+        id: number;
+        score: number;
+        anti_pattern: string;
+    };
+}
+export declare function addLearning(input: AddLearningInput): AddLearningResult;
 export declare function getLearning(id: number): Learning | null;
 export declare function listLearnings(options?: {
     severity?: string;

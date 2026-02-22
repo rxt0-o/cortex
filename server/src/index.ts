@@ -26,10 +26,60 @@ function runAllPruning(): { decisions_archived: number; learnings_archived: numb
   };
 }
 
-const server = new McpServer({
-  name: 'project-cortex',
-  version: '0.1.0',
-});
+const CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code. It remembers sessions, tracks decisions, learns from mistakes, and maps project architecture across all projects.
+
+WHEN TO USE CORTEX TOOLS:
+
+**Memory & Context** (use at session start or when resuming work):
+- cortex_snapshot → get full brain state: open items, recent sessions, decisions, learnings
+- cortex_get_context → get relevant context for specific files being worked on
+- cortex_list_sessions → review past work history
+
+**Decisions** (use when making architectural or design choices):
+- cortex_add_decision → log WHY a decision was made (architecture, config, security, feature, bugfix, convention)
+- cortex_list_decisions → review existing decisions before making new ones
+- cortex_mark_decision_reviewed → confirm a decision is still current
+
+**Errors & Learnings** (use when bugs occur or patterns are identified):
+- cortex_add_error → record a bug with root cause and fix
+- cortex_add_learning → record an anti-pattern to avoid in future
+- cortex_check_regression → check code against known anti-patterns BEFORE writing/editing files
+- cortex_list_learnings → review known anti-patterns
+
+**Project Map & Files** (use when exploring or navigating codebase):
+- cortex_scan_project / cortex_update_map → index the codebase structure
+- cortex_get_map → get architecture overview
+- cortex_get_deps → get dependency tree for a file
+- cortex_get_file_history / cortex_blame → see full history of a file
+- cortex_get_hot_zones → find most frequently changed files
+
+**Search** (use when looking for past context, decisions, or patterns):
+- cortex_search → full-text search across all stored data
+
+**Tracking & TODOs** (use when noting unfinished work):
+- cortex_add_unfinished / cortex_get_unfinished → track open tasks
+- cortex_add_intent → store what you plan to do next session
+- cortex_snooze → set a reminder for future sessions
+
+**Health & Stats** (use for project overview):
+- cortex_get_health → project health score
+- cortex_get_stats → counts of all stored data
+
+**Profile & Conventions** (use for personalization and code standards):
+- cortex_onboard → first-time setup
+- cortex_add_convention → record coding conventions
+- cortex_get_conventions → list active conventions
+
+IMPORTANT RULES:
+- Always call cortex_check_regression before writing or editing code files
+- Call cortex_snapshot at the start of complex sessions to get full context
+- Log decisions with cortex_add_decision whenever a significant architectural choice is made
+- Record errors with cortex_add_error after fixing bugs so patterns are remembered`;
+
+const server = new McpServer(
+  { name: 'project-cortex', version: '0.1.0' },
+  { instructions: CORTEX_INSTRUCTIONS },
+);
 
 // ═══════════════════════════════════════════════════
 // SESSION TOOLS
@@ -233,16 +283,16 @@ server.tool(
   'cortex_add_decision',
   'Log an architectural or design decision with reasoning',
   {
-    title: z.string(),
-    reasoning: z.string(),
-    category: z.enum(['architecture', 'convention', 'bugfix', 'feature', 'config', 'security']),
-    files_affected: z.array(z.string()).optional(),
+    title: z.string().describe('Short title of the decision. Example: "Use SQLite for local persistence" or "Adopt BM25/FTS5 for full-text search"'),
+    reasoning: z.string().describe('WHY this decision was made. Include trade-offs and context. Example: "SQLite is embedded, zero-config, and sufficient for single-user local tool. Postgres would add deployment complexity."'),
+    category: z.enum(['architecture', 'convention', 'bugfix', 'feature', 'config', 'security']).describe('Category: architecture=structural choices, convention=code style, bugfix=fix rationale, feature=new functionality, config=settings/env, security=security choices'),
+    files_affected: z.array(z.string()).optional().describe('File paths affected by this decision. Example: ["server/src/db.ts", "scripts/ensure-db.js"]'),
     alternatives: z.array(z.object({
-      option: z.string(),
-      reason_rejected: z.string(),
+      option: z.string().describe('Alternative that was considered. Example: "Use PostgreSQL"'),
+      reason_rejected: z.string().describe('Why this alternative was rejected. Example: "Too heavy for local single-user tool"'),
     })).optional(),
     session_id: z.string().optional(),
-    confidence: z.enum(['high', 'medium', 'low']).optional(),
+    confidence: z.enum(['high', 'medium', 'low']).optional().describe('Confidence level: high=certain, medium=likely good, low=experimental/uncertain'),
   },
   async (input) => {
     getDb();
@@ -288,13 +338,13 @@ server.tool(
   'cortex_add_error',
   'Record an error with optional root cause, fix, and prevention rule',
   {
-    error_message: z.string(),
-    root_cause: z.string().optional(),
-    fix_description: z.string().optional(),
-    fix_diff: z.string().optional(),
-    files_involved: z.array(z.string()).optional(),
-    prevention_rule: z.string().optional(),
-    severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    error_message: z.string().describe('The error that occurred. Example: "TypeError: Cannot read property \'id\' of undefined in sessions.updateSession" or "FTS5 table not found: learnings_fts"'),
+    root_cause: z.string().optional().describe('WHY it happened. Example: "Session was not created before updateSession was called" or "ensure-db.js ran before FTS5 virtual tables were defined"'),
+    fix_description: z.string().optional().describe('How it was fixed. Example: "Added createSession() call before updateSession() in cortex_save_session handler"'),
+    fix_diff: z.string().optional().describe('The actual code diff that fixed it (optional, for future reference)'),
+    files_involved: z.array(z.string()).optional().describe('Files where the error occurred. Example: ["server/src/index.ts", "server/src/modules/sessions.ts"]'),
+    prevention_rule: z.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession\\(" or "FTS5"'),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional().describe('Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down'),
     session_id: z.string().optional(),
   },
   async (input) => {
@@ -327,12 +377,12 @@ server.tool(
   'cortex_add_learning',
   'Record an anti-pattern and its correct alternative, optionally with auto-blocking regex',
   {
-    anti_pattern: z.string(),
-    correct_pattern: z.string(),
-    context: z.string(),
-    detection_regex: z.string().optional(),
-    severity: z.enum(['low', 'medium', 'high']).optional(),
-    auto_block: z.boolean().optional(),
+    anti_pattern: z.string().describe('The bad pattern to avoid. Example: "Using db.prepare() inside a loop" or "Calling getDb() without checking if DB is initialized"'),
+    correct_pattern: z.string().describe('The correct alternative to use instead. Example: "Prepare statements once outside the loop and reuse" or "Always call ensureDb() before getDb()"'),
+    context: z.string().describe('When/where this applies. Example: "SQLite better-sqlite3 usage" or "Cortex server startup sequence"'),
+    detection_regex: z.string().optional().describe('Regex to auto-detect this pattern in code. Example: "db\\.prepare\\(.*\\).*\\.run\\(" or "for.*getDb\\(\\)"'),
+    severity: z.enum(['low', 'medium', 'high']).optional().describe('Impact: low=minor quality issue, medium=likely bug, high=will cause failures'),
+    auto_block: z.boolean().optional().describe('If true, cortex_check_regression will flag this pattern before every file edit'),
     session_id: z.string().optional(),
   },
   async (input) => {
@@ -572,9 +622,9 @@ server.tool(
   'cortex_add_unfinished',
   'Track something that needs to be done later',
   {
-    description: z.string(),
-    context: z.string().optional(),
-    priority: z.enum(['low', 'medium', 'high']).optional(),
+    description: z.string().describe('What needs to be done. Example: "Implement RRF fusion for cortex_search (BM25 + embeddings)" or "Add input_examples to tool definitions"'),
+    context: z.string().optional().describe('Why it matters / relevant links. Example: "See https://github.com/oraios/serena — LSP-based symbol navigation, 30+ languages"'),
+    priority: z.enum(['low', 'medium', 'high']).optional().describe('Priority: low=nice-to-have, medium=should do soon, high=blocking or urgent'),
     session_id: z.string().optional(),
   },
   async (input) => {
@@ -605,14 +655,14 @@ server.tool(
   'cortex_add_convention',
   'Add or update a coding convention with detection/violation patterns',
   {
-    name: z.string(),
-    description: z.string(),
-    detection_pattern: z.string().optional(),
-    violation_pattern: z.string().optional(),
-    examples_good: z.array(z.string()).optional(),
-    examples_bad: z.array(z.string()).optional(),
+    name: z.string().describe('Short convention name. Example: "No raw SQL in route handlers" or "Always use prepared statements"'),
+    description: z.string().describe('What the convention requires. Example: "All DB queries must go through module functions in server/src/modules/, never inline SQL in index.ts"'),
+    detection_pattern: z.string().optional().describe('Regex to detect correct usage. Example: "import.*modules/"'),
+    violation_pattern: z.string().optional().describe('Regex to detect violations. Example: "db\\.prepare\\(.*SELECT.*\\).*index\\.ts"'),
+    examples_good: z.array(z.string()).optional().describe('Examples of correct code. Example: ["sessions.createSession({ id })", "decisions.addDecision(input)"]'),
+    examples_bad: z.array(z.string()).optional().describe('Examples of incorrect code. Example: ["db.prepare(\'SELECT * FROM sessions\').all()"]'),
     scope: z.enum(['global', 'frontend', 'backend', 'database']).optional(),
-    source: z.string().optional(),
+    source: z.string().optional().describe('Where this convention comes from. Example: "CLAUDE.md" or "code review 2026-02-22"'),
   },
   async (input) => {
     getDb();

@@ -8,7 +8,8 @@ import { openDb } from './ensure-db.js';
 
 async function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
-  const { session_id, transcript_path, cwd } = input;
+  const { session_id, transcript_path, cwd, stop_hook_active } = input;
+  if (stop_hook_active) { process.exit(0); }
 
   const db = openDb(cwd);
 
@@ -161,11 +162,17 @@ async function buildTranscriptSummary(transcriptPath, fileList, toolCounts) {
         if (msgs.length >= 5) break;
         try {
           const e = JSON.parse(line);
-          if (e.role === 'user' && typeof e.content === 'string' && e.content.length > 10) {
+          const isUser = e.role === 'user' || e.type === 'human';
+          if (isUser && typeof e.content === 'string' && e.content.length > 10) {
             msgs.push(e.content.slice(0, 120));
-          } else if (e.role === 'user' && Array.isArray(e.content)) {
+          } else if (isUser && Array.isArray(e.content)) {
             const text = e.content.find(b => b.type === 'text')?.text;
-            if (text && text.length > 10) msgs.push(text.slice(0, 120));
+            if (text && text.length > 10 &&
+                !text.startsWith('-- Project Cortex') &&
+                !text.startsWith('Cortex') &&
+                !text.includes('hookSpecificOutput')) {
+              msgs.push(text.slice(0, 120));
+            }
           }
         } catch { /* skip */ }
       }

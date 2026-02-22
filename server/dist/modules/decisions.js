@@ -1,11 +1,29 @@
 import { getDb, now, toJson, parseJson } from '../db.js';
+import { findSimilar } from '../utils/similarity.js';
 export function addDecision(input) {
     const db = getDb();
+    // Duplikat-Check vor INSERT
+    const existing = db.prepare('SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200').all();
+    const corpus = existing.map(e => ({ id: e.id, text: e.title + ' ' + e.reasoning }));
+    const similar = findSimilar(input.title + ' ' + input.reasoning, corpus);
     const result = db.prepare(`
     INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? 'high');
-    return getDecision(Number(result.lastInsertRowid));
+    const decision = getDecision(Number(result.lastInsertRowid));
+    if (similar.length > 0) {
+        const top = similar[0];
+        const topEntry = existing.find(e => e.id === top.id);
+        return {
+            decision,
+            duplicate: {
+                id: top.id,
+                score: Math.round(top.score * 100),
+                title: topEntry?.title ?? '',
+            },
+        };
+    }
+    return { decision };
 }
 export function getDecision(id) {
     const db = getDb();

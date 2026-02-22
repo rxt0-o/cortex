@@ -37,16 +37,51 @@ function ensureDaemonRunning(cwd) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
-  const { session_id, cwd } = input;
+  const { session_id, cwd, source } = input;
+  const isCompact = source === 'compact';
 
-  // Daemon starten (falls nicht bereits laufend)
-  ensureDaemonRunning(cwd);
+  // Daemon starten (falls nicht bereits laufend — nicht bei Compaction)
+  if (!isCompact) ensureDaemonRunning(cwd);
 
   const db = openDb(cwd);
 
   // Active project from meta (optional)
   let activeProject = '';
   try { activeProject = db.prepare(`SELECT value FROM meta WHERE key='active_project'`).get()?.value || ''; } catch {}
+
+  // Compact-Branch: kompakter Re-inject nach Context-Compaction
+  if (isCompact) {
+    try {
+      const parts = [];
+
+      // Letzte Session
+      const lastSession = db.prepare(`SELECT summary FROM sessions WHERE status != 'active' AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get();
+      if (lastSession) parts.push(`LAST SESSION: ${lastSession.summary}`);
+
+      // Unfinished (nur High-Priority)
+      const urgent = db.prepare(`SELECT description FROM unfinished WHERE resolved_at IS NULL AND priority='high' ORDER BY created_at DESC LIMIT 3`).all();
+      if (urgent.length > 0) { parts.push('OPEN (high):'); urgent.forEach(u => parts.push(`  - ${u.description}`)); }
+
+      // Auto-block rules
+      const rules = db.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE auto_block=1 AND detection_regex IS NOT NULL ORDER BY occurrences DESC LIMIT 4`).all();
+      if (rules.length > 0) { parts.push('AUTO-BLOCKED:'); rules.forEach(r => parts.push(`  X ${r.anti_pattern} -> ${r.correct_pattern}`)); }
+
+      const context = [
+        `-- Cortex re-injected after compaction${activeProject ? ` [${activeProject}]` : ''} --`,
+        ...parts,
+        '---',
+      ].join('\n');
+
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
+      }));
+
+      db.prepare('INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, ?)').run(session_id, new Date().toISOString(), 'active');
+    } finally {
+      db.close();
+    }
+    return;
+  }
 
   try {
     const parts = [];

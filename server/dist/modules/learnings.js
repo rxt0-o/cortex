@@ -1,11 +1,29 @@
 import { getDb, now } from '../db.js';
+import { findSimilar } from '../utils/similarity.js';
 export function addLearning(input) {
     const db = getDb();
+    // Duplikat-Check vor INSERT
+    const existing = db.prepare('SELECT id, anti_pattern, correct_pattern FROM learnings WHERE archived_at IS NULL LIMIT 500').all();
+    const corpus = existing.map(e => ({ id: e.id, text: e.anti_pattern + ' ' + e.correct_pattern }));
+    const similar = findSimilar(input.anti_pattern + ' ' + input.correct_pattern, corpus);
     const result = db.prepare(`
     INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.anti_pattern, input.correct_pattern, input.detection_regex ?? null, input.context, input.severity ?? 'medium', input.auto_block ? 1 : 0);
-    return getLearning(Number(result.lastInsertRowid));
+    const learning = getLearning(Number(result.lastInsertRowid));
+    if (similar.length > 0) {
+        const top = similar[0];
+        const topEntry = existing.find(e => e.id === top.id);
+        return {
+            learning,
+            duplicate: {
+                id: top.id,
+                score: Math.round(top.score * 100),
+                anti_pattern: topEntry?.anti_pattern ?? '',
+            },
+        };
+    }
+    return { learning };
 }
 export function getLearning(id) {
     const db = getDb();
