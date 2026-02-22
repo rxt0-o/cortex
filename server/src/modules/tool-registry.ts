@@ -1,6 +1,8 @@
 // server/src/modules/tool-registry.ts
 
-export const TOOL_CATEGORIES: Record<string, string> = {
+export type ToolCategory = 'memory' | 'decisions' | 'errors' | 'map' | 'tracking' | 'notes' | 'intelligence' | 'stats';
+
+export const TOOL_CATEGORIES: Record<ToolCategory, string> = {
   memory: `## Memory & Context Tools
 
 Use these at session start or when resuming work.
@@ -92,16 +94,15 @@ Advanced analysis and pattern detection.
 - **cortex_add_convention** → Add or update a coding convention.`,
 };
 
-export const VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES);
+export const VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES) as ToolCategory[];
 
 export function getToolGuidance(categories: string[]): string {
   const results: string[] = [];
   for (const cat of categories) {
-    if (TOOL_CATEGORIES[cat]) {
-      results.push(TOOL_CATEGORIES[cat]);
-    } else {
-      results.push(`Unknown category: "${cat}". Valid categories: ${VALID_CATEGORIES.join(', ')}`);
+    if (!TOOL_CATEGORIES[cat as ToolCategory]) {
+      throw new Error(`Unknown tool category: "${cat}". Valid: ${VALID_CATEGORIES.join(', ')}`);
     }
+    results.push(TOOL_CATEGORIES[cat as ToolCategory]);
   }
   return results.join('\n\n---\n\n');
 }
