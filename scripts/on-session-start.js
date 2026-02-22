@@ -6,6 +6,28 @@ import { execFileSync, spawn } from 'child_process';
 import { join } from 'path';
 import { openDb } from './ensure-db.js';
 
+// Preloaded Tool Guidance (memory + tracking) — aus tool-registry.ts generiert
+const PRELOADED_TOOL_GUIDANCE = `## Memory & Context Tools
+
+Use these at session start or when resuming work.
+
+- **cortex_snapshot** → Full brain state: open items, recent sessions, decisions, learnings. Call this first in complex sessions.
+- **cortex_get_context** → Relevant context for specific files. Pass file paths to get related decisions/errors/sessions.
+- **cortex_list_sessions** → Recent work history with summaries.
+- **cortex_search** → BM25/FTS5 full-text search across all stored data (sessions, decisions, errors, learnings).
+
+---
+
+## Tracking & TODOs Tools
+
+Use when noting unfinished work or setting reminders.
+
+- **cortex_add_unfinished** → Track something that needs to be done later. Fields: description, priority (low/medium/high), context.
+- **cortex_get_unfinished** → List open/unresolved items.
+- **cortex_resolve_unfinished** → Mark an unfinished item as done.
+- **cortex_add_intent** → Store what you plan to do next session (shown at next SessionStart).
+- **cortex_snooze** → Schedule a future session reminder. Use relative (3d/1w) or ISO date.`;
+
 function ensureDaemonRunning(cwd) {
   try {
     const pidPath = join(cwd, '.claude', 'cortex-daemon.pid');
@@ -235,6 +257,9 @@ function main() {
       '', ...parts, '',
       '/cortex-search, /cortex-map, /cortex-deps for details',
       '---',
+      '',
+      '## Preloaded Tool Guidance',
+      PRELOADED_TOOL_GUIDANCE,
     ].join('\n');
 
     process.stdout.write(JSON.stringify({
