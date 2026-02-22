@@ -37,8 +37,8 @@ export function registerErrorTools(server: McpServer): void {
       const db = getDb();
       const result = errors.listErrors(input);
       if (input.include_notes) {
-        for (const e of result as any[]) {
-          (e as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='error' AND entity_id=? ORDER BY created_at DESC`).all(e.id);
+        for (const e of result as unknown as Record<string, unknown>[]) {
+          e.notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='error' AND entity_id=? ORDER BY created_at DESC`).all(e.id as number);
         }
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

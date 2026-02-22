@@ -32419,8 +32419,13 @@ function registerProfileTools(server2) {
     entity_id: external_exports3.number().optional().describe("Filter by linked entity ID")
   }, async ({ limit, search, entity_type, entity_id }) => {
     const db2 = getDb();
+    if (entity_id && !entity_type) {
+      return { content: [{ type: "text", text: "Error: entity_id requires entity_type" }] };
+    }
     let notes;
-    if (entity_type && entity_id) {
+    if (entity_type && entity_id && search) {
+      notes = db2.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? AND text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, `%${search}%`, limit);
+    } else if (entity_type && entity_id) {
       notes = db2.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, limit);
     } else if (search) {
       notes = db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit);

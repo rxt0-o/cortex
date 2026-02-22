@@ -174,8 +174,13 @@ export function registerProfileTools(server: McpServer): void {
     entity_id: z.number().optional().describe('Filter by linked entity ID'),
   }, async ({ limit, search, entity_type, entity_id }) => {
     const db = getDb();
+    if (entity_id && !entity_type) {
+      return { content: [{ type: 'text' as const, text: 'Error: entity_id requires entity_type' }] };
+    }
     let notes: any[];
-    if (entity_type && entity_id) {
+    if (entity_type && entity_id && search) {
+      notes = db.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? AND text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, `%${search}%`, limit) as any[];
+    } else if (entity_type && entity_id) {
       notes = db.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, limit) as any[];
     } else if (search) {
       notes = db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit) as any[];

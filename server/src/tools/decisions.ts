@@ -43,8 +43,8 @@ export function registerDecisionTools(server: McpServer): void {
       const db = getDb();
       const result = decisions.listDecisions({ category: input.category, limit: input.limit });
       if (input.include_notes) {
-        for (const d of result as any[]) {
-          (d as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='decision' AND entity_id=? ORDER BY created_at DESC`).all(d.id);
+        for (const d of result as unknown as Record<string, unknown>[]) {
+          d.notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='decision' AND entity_id=? ORDER BY created_at DESC`).all(d.id as number);
         }
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

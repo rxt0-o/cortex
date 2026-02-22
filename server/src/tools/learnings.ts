@@ -68,8 +68,8 @@ export function registerLearningTools(server: McpServer): void {
       const db = getDb();
       const result = learnings.listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
       if (include_notes) {
-        for (const l of result as any[]) {
-          (l as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='learning' AND entity_id=? ORDER BY created_at DESC`).all(l.id);
+        for (const l of result as unknown as Record<string, unknown>[]) {
+          l.notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='learning' AND entity_id=? ORDER BY created_at DESC`).all(l.id as number);
         }
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
