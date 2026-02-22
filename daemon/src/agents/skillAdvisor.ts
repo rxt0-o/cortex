@@ -132,4 +132,79 @@ Antworte NUR mit dem JSON-Schema. Leere Arrays sind OK.
     process.stderr.write(`[cortex-daemon] SkillAdvisor: agent failed: ${result.error ?? 'no output'}\n`);
     return;
   }
+
+  let output: {
+    skill_updates?: Array<{ skill_path: string; find: string; replace: string; reason: string }>;
+    new_skills?: Array<{ skill_path: string; content: string; reason: string }>;
+  };
+
+  try {
+    const parsed = JSON.parse(result.output);
+    output = parsed?.structured_output ?? parsed;
+    if (!output || typeof output !== 'object') throw new Error('invalid');
+  } catch {
+    try {
+      const jsonMatch = result.output.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return;
+      output = JSON.parse(jsonMatch[0]);
+    } catch { return; }
+  }
+
+  let changed = 0;
+
+  // Bestehende Skills updaten
+  if (output.skill_updates) {
+    for (const update of output.skill_updates) {
+      if (!update.skill_path || !update.find || !update.replace) continue;
+      const fullPath = join(projectPath, update.skill_path);
+      if (!existsSync(fullPath)) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: skill not found: ${update.skill_path}\n`);
+        continue;
+      }
+      // Sicherheitscheck: nur skills/ Verzeichnis erlaubt
+      if (!update.skill_path.startsWith('skills/')) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: rejected path outside skills/: ${update.skill_path}\n`);
+        continue;
+      }
+      try {
+        const current = readFileSync(fullPath, 'utf-8');
+        if (!current.includes(update.find)) {
+          process.stderr.write(`[cortex-daemon] SkillAdvisor: find-text not found in ${update.skill_path}, skipping\n`);
+          continue;
+        }
+        const updated = current.replace(update.find, update.replace);
+        writeFileSync(fullPath, updated, 'utf-8');
+        process.stdout.write(`[cortex-daemon] SkillAdvisor: updated ${update.skill_path} — ${update.reason.slice(0, 60)}\n`);
+        changed++;
+      } catch (err: any) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: write error ${update.skill_path}: ${err.message}\n`);
+      }
+    }
+  }
+
+  // Neue Skills erstellen
+  if (output.new_skills) {
+    for (const newSkill of output.new_skills) {
+      if (!newSkill.skill_path || !newSkill.content) continue;
+      if (!newSkill.skill_path.startsWith('skills/')) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: rejected new skill path outside skills/: ${newSkill.skill_path}\n`);
+        continue;
+      }
+      const fullPath = join(projectPath, newSkill.skill_path);
+      if (existsSync(fullPath)) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: new skill already exists, skipping: ${newSkill.skill_path}\n`);
+        continue;
+      }
+      try {
+        mkdirSync(join(fullPath, '..'), { recursive: true });
+        writeFileSync(fullPath, newSkill.content, 'utf-8');
+        process.stdout.write(`[cortex-daemon] SkillAdvisor: created ${newSkill.skill_path} — ${newSkill.reason.slice(0, 60)}\n`);
+        changed++;
+      } catch (err: any) {
+        process.stderr.write(`[cortex-daemon] SkillAdvisor: create error ${newSkill.skill_path}: ${err.message}\n`);
+      }
+    }
+  }
+
+  process.stdout.write(`[cortex-daemon] SkillAdvisor: done — ${changed} skill(s) modified\n`);
 }
