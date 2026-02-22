@@ -32645,6 +32645,71 @@ function registerMetaTools(server2) {
   });
 }
 
+// dist/modules/activity.js
+function logActivity(entry) {
+  const db2 = getDb();
+  const r = db2.prepare(`
+    INSERT INTO activity_log (tool_name, entity_type, entity_id, action, old_value, new_value, session_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(entry.tool_name, entry.entity_type ?? null, entry.entity_id ?? null, entry.action, entry.old_value ?? null, entry.new_value ?? null, entry.session_id ?? null);
+  return { id: r.lastInsertRowid };
+}
+function listActivity(filter = {}) {
+  const db2 = getDb();
+  const conditions = [];
+  const params = [];
+  if (filter.entity_type) {
+    conditions.push("entity_type=?");
+    params.push(filter.entity_type);
+  }
+  if (filter.entity_id) {
+    conditions.push("entity_id=?");
+    params.push(filter.entity_id);
+  }
+  if (filter.action) {
+    conditions.push("action=?");
+    params.push(filter.action);
+  }
+  if (filter.since) {
+    conditions.push("created_at >= ?");
+    params.push(filter.since);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const lim = filter.limit ?? 50;
+  params.push(lim);
+  return db2.prepare(`SELECT * FROM activity_log ${where} ORDER BY created_at DESC LIMIT ?`).all(...params);
+}
+
+// dist/tools/activity.js
+function registerActivityTools(server2) {
+  server2.tool("cortex_activity_log", "Get activity log \u2014 structured audit trail of all important operations", {
+    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional().describe('Filter by entity type. Example: "decision"'),
+    entity_id: external_exports3.number().optional().describe("Filter by entity ID. Example: 42"),
+    action: external_exports3.enum(["create", "update", "delete", "archive"]).optional().describe("Filter by action type"),
+    since: external_exports3.string().optional().describe('ISO date or datetime to filter from. Example: "2026-02-01"'),
+    limit: external_exports3.number().optional().default(50)
+  }, async (input) => {
+    getDb();
+    const entries = listActivity(input);
+    if (entries.length === 0)
+      return { content: [{ type: "text", text: "No activity found." }] };
+    return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
+  });
+  server2.tool("cortex_log_activity", "Manually log an activity entry \u2014 call after important operations", {
+    tool_name: external_exports3.string().describe('Tool or operation name. Example: "cortex_add_decision" or "manual-refactor"'),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional(),
+    entity_id: external_exports3.number().optional().describe("ID of the affected entity"),
+    action: external_exports3.enum(["create", "update", "delete", "archive"]).describe("Type of action performed"),
+    old_value: external_exports3.string().optional().describe("Previous value as JSON string"),
+    new_value: external_exports3.string().optional().describe("New value as JSON string"),
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    const result = logActivity(input);
+    return { content: [{ type: "text", text: `Activity logged (id: ${result.id})` }] };
+  });
+}
+
 // dist/index.js
 var CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
 
@@ -32671,6 +32736,7 @@ registerIntelligenceTools(server);
 registerStatsTools(server);
 registerProfileTools(server);
 registerMetaTools(server);
+registerActivityTools(server);
 async function main() {
   getDb();
   const transport = new StdioServerTransport();

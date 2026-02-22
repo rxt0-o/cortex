@@ -12,6 +12,7 @@ import { registerIntelligenceTools } from './tools/intelligence.js';
 import { registerStatsTools } from './tools/stats.js';
 import { registerProfileTools } from './tools/profile.js';
 import { registerMetaTools } from './tools/meta.js';
+import { registerActivityTools } from './tools/activity.js';
 
 const CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
 
@@ -43,6 +44,7 @@ registerIntelligenceTools(server);
 registerStatsTools(server);
 registerProfileTools(server);
 registerMetaTools(server);
+registerActivityTools(server);
 
 async function main() {
   getDb();
