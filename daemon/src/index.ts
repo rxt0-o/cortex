@@ -89,6 +89,9 @@ setInterval(() => {
       runPatternAgent(projectPath, event.session_id).catch(err => {
         process.stderr.write(`[cortex-daemon] PatternAgent error: ${err}\n`);
       });
+      runArchitectAgent(projectPath, 'post_session').catch(err => {
+        process.stderr.write(`[cortex-daemon] Architect (post-session) error: ${err}\n`);
+      });
       processed.push(event);
     }
   }
