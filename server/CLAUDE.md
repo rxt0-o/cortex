@@ -1,6 +1,6 @@
 # Cortex MCP-Server
 
-TypeScript MCP-Server mit 55 Tools. Kommuniziert via stdio mit Claude Code.
+TypeScript MCP-Server mit 56 Tools. Kommuniziert via stdio mit Claude Code.
 
 ## Build
 
@@ -14,9 +14,21 @@ npm run build   # erzeugt dist/bundle.js (esbuild bundle)
 
 ```
 server/src/
-├── index.ts          # Alle 55 Tool-Registrierungen + CORTEX_INSTRUCTIONS
+├── index.ts          # ~60 Zeilen: Server-Setup + register*Tools() calls
+├── helpers.ts        # runAllPruning() shared helper
 ├── db.ts             # SQLite-Verbindung via node:sqlite, getDb() / closeDb()
-└── modules/
+├── tools/            # Tool-Registrierungen (Zod-Schema + Handler-Glue)
+│   ├── sessions.ts   # registerSessionTools    (4 tools)
+│   ├── decisions.ts  # registerDecisionTools   (3 tools)
+│   ├── errors.ts     # registerErrorTools      (3 tools)
+│   ├── learnings.ts  # registerLearningTools   (5 tools)
+│   ├── project-map.ts# registerProjectMapTools (8 tools)
+│   ├── tracking.ts   # registerTrackingTools   (5 tools)
+│   ├── intelligence.ts# registerIntelligenceTools (7 tools)
+│   ├── stats.ts      # registerStatsTools      (7 tools)
+│   ├── profile.ts    # registerProfileTools    (13 tools)
+│   └── meta.ts       # registerMetaTools       (1 tool: cortex_load_tools)
+└── modules/          # Business-Logik (DB-Queries, kein Tool-Glue)
     ├── sessions.ts
     ├── decisions.ts
     ├── errors.ts
@@ -26,7 +38,8 @@ server/src/
     ├── dependencies.ts
     ├── diffs.ts
     ├── conventions.ts
-    └── health.ts
+    ├── health.ts
+    └── tool-registry.ts
 ```
 
 ## Regeln
