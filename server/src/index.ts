@@ -12,6 +12,8 @@ import * as deps from './modules/dependencies.js';
 import * as diffs from './modules/diffs.js';
 import * as conventions from './modules/conventions.js';
 import * as health from './modules/health.js';
+import { parseDiff } from './analyzer/diff-extractor.js';
+import { summarizeFunctionChanges } from './analyzer/chunk-analyzer.js';
 
 function runAllPruning(): { decisions_archived: number; learnings_archived: number; errors_archived: number } {
   const d = decisions.runDecisionsPruning();
@@ -153,26 +155,32 @@ server.tool(
   const maxResults = limit ?? 10;
   const lines: string[] = [];
 
-  const sessionResults = sessions.searchSessions(query, maxResults);
-  for (const s of sessionResults) lines.push(`[SESSION] ${(s as any).summary ?? (s as any).id}`);
+  function ftsSearch(ftsTable: string, labelFn: (row: any) => string, prefix: string) {
+    try {
+      const rows = db.prepare(
+        'SELECT rowid, * FROM ' + ftsTable + ' WHERE ' + ftsTable + ' MATCH ? ORDER BY bm25(' + ftsTable + ') LIMIT ?'
+      ).all(query, maxResults) as any[];
+      for (const r of rows) lines.push(prefix + ' ' + labelFn(r));
+    } catch {}
+  }
 
-  const decisionResults = decisions.searchDecisions(query, maxResults);
-  for (const d of decisionResults) lines.push(`[DECISION] ${(d as any).title}`);
-
-  const errorResults = errors.searchErrors(query, maxResults);
-  for (const e of errorResults) lines.push(`[ERROR] ${(e as any).error_message}`);
-
-  const learningResults = learnings.searchLearnings(query, maxResults);
-  for (const l of learningResults) lines.push(`[LEARNING] ${(l as any).anti_pattern}`);
+  ftsSearch('learnings_fts', r => r.anti_pattern, '[LEARNING]');
+  ftsSearch('decisions_fts', r => r.title, '[DECISION]');
+  ftsSearch('errors_fts', r => r.error_message, '[ERROR]');
+  ftsSearch('notes_fts', r => String(r.text).slice(0, 120), '[NOTE]');
 
   try {
-    const noteResults = db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${query}%`, maxResults) as any[];
-    for (const n of noteResults) lines.push(`[NOTE] ${n.text.slice(0, 120)}`);
+    const sr = db.prepare(
+      "SELECT summary FROM sessions WHERE summary LIKE ? AND status != 'active' ORDER BY started_at DESC LIMIT ?"
+    ).all('%' + query + '%', maxResults) as any[];
+    for (const s of sr) lines.push('[SESSION] ' + s.summary);
   } catch {}
 
   try {
-    const unfinishedResults = db.prepare(`SELECT * FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?`).all(`%${query}%`, maxResults) as any[];
-    for (const u of unfinishedResults) lines.push(`[TODO] ${u.description}`);
+    const ur = db.prepare(
+      'SELECT description FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?'
+    ).all('%' + query + '%', maxResults) as any[];
+    for (const u of ur) lines.push('[TODO] ' + u.description);
   } catch {}
 
   return { content: [{ type: 'text' as const, text: lines.join('\n') || 'No results.' }] };
@@ -938,6 +946,22 @@ server.tool(
         lines.push('DECISIONS:');
         for (const d of fileDecisions) lines.push(`  [${d.category}] ${d.title}`);
       }
+    } catch {}
+
+    // Function-Level Breakdown via chunk-analyzer
+    try {
+      const rawDiffs = db.prepare(
+        'SELECT diff_content FROM diffs WHERE file_path LIKE ? ORDER BY created_at DESC LIMIT 5'
+      ).all('%' + file_path + '%') as any[];
+      const fnChanges: string[] = [];
+      for (const d of rawDiffs) {
+        if (!d.diff_content) continue;
+        for (const fileDiff of parseDiff(d.diff_content)) {
+          const s = summarizeFunctionChanges(fileDiff);
+          if (!s.includes('no changes')) fnChanges.push('  ' + s);
+        }
+      }
+      if (fnChanges.length > 0) { lines.push('FUNCTION CHANGES:'); lines.push(...fnChanges); }
     } catch {}
 
     return { content: [{ type: 'text' as const, text: lines.join('\n') || 'No history found.' }] };
