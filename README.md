@@ -38,6 +38,22 @@ Cortex gives Claude Code a long-term brain. It tracks every session, remembers e
 
 That's it. Cortex automatically registers hooks, the MCP server, and all skills.
 
+**Auto-allow all Cortex tools (no permission popups):**
+
+```
+/setup
+```
+
+Or manually add to `.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__plugin_cortex_cortex__*"]
+  }
+}
+```
+
 **Requirements:** Node.js >= 22, Claude Code CLI
 
 ### Manual Installation (alternative)
