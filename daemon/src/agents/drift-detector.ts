@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { runClaudeAgent } from '../runner.js';
+import { runClaudeAgent, buildAgentContext, formatAgentContext } from '../runner.js';
 
 export async function runDriftDetectorAgent(projectPath: string): Promise<void> {
   const dbPath = join(projectPath, '.claude', 'cortex.db');
@@ -24,6 +24,9 @@ export async function runDriftDetectorAgent(projectPath: string): Promise<void> 
         return;
       }
     }
+
+    const agentCtx = buildAgentContext(projectPath, 'drift-detector');
+    const contextBlock = formatAgentContext(agentCtx);
 
     // Load recent decisions (architecture + convention)
     const decisions = db.prepare(`
@@ -48,7 +51,7 @@ export async function runDriftDetectorAgent(projectPath: string): Promise<void> 
     const filesStr = recentDiffs.map(d => d.file_path).join('\n');
 
     const prompt = `You are a code drift detector. Analyze if recent file changes might conflict with architectural decisions.
-
+${contextBlock}
 ARCHITECTURAL DECISIONS:
 ${decisionsStr || '(none)'}
 

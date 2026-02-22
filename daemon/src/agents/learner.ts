@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
-import { runClaudeAgent } from '../runner.js';
+import { runClaudeAgent, buildAgentContext, formatAgentContext } from '../runner.js';
 
 const LEARNER_SCHEMA = {
   type: 'object',
@@ -90,6 +90,9 @@ export async function runLearnerAgent(projectPath: string, transcriptPath?: stri
 
   const db = new DatabaseSync(dbPath);
 
+  const agentCtx = buildAgentContext(projectPath, 'learner');
+  const contextBlock = formatAgentContext(agentCtx);
+
   try {
     // Geänderte Dateien aus letzter Session (letzte 2h)
     const recentFiles = db.prepare(`
@@ -124,7 +127,7 @@ export async function runLearnerAgent(projectPath: string, transcriptPath?: stri
     const prompt = `<role>
 Du bist ein Code-Qualitaets-Analyst. Analysiere die letzte Coding-Session und extrahiere strukturiertes Wissen.
 </role>
-
+${contextBlock}
 <session_data>
 <changed_files>
 ${recentFiles.map(f => `${f.path} [${f.file_type ?? 'unknown'}]`).join('\n') || '(keine)'}
