@@ -15,6 +15,7 @@ export interface Learning {
   access_count: number;
   last_accessed: string | null;
   archived_at: string | null;
+  confidence: number;
 }
 
 export interface AddLearningInput {
@@ -43,8 +44,8 @@ export function addLearning(input: AddLearningInput): AddLearningResult {
   const similar = findSimilar(input.anti_pattern + ' ' + input.correct_pattern, corpus);
 
   const result = db.prepare(`
-    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
   `).run(
     input.session_id ?? null,
     now(),
@@ -149,6 +150,7 @@ export interface UpdateLearningInput {
   context?: string;
   severity?: string;
   auto_block?: boolean;
+  confidence?: number;
 }
 
 export function updateLearning(input: UpdateLearningInput): Learning | null {
@@ -162,6 +164,7 @@ export function updateLearning(input: UpdateLearningInput): Learning | null {
   if (input.context !== undefined) { sets.push('context = ?'); values.push(input.context); }
   if (input.severity !== undefined) { sets.push('severity = ?'); values.push(input.severity); }
   if (input.auto_block !== undefined) { sets.push('auto_block = ?'); values.push(input.auto_block ? 1 : 0); }
+  if (input.confidence !== undefined) { sets.push('confidence = ?'); values.push(input.confidence); }
 
   if (sets.length === 0) return getLearning(input.id);
   values.push(input.id);

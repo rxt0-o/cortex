@@ -55,6 +55,7 @@ export function registerLearningTools(server: McpServer): void {
       context: z.string().optional(),
       severity: z.enum(['low', 'medium', 'high']).optional(),
       auto_block: z.boolean().optional(),
+      confidence: z.number().min(0.3).max(0.9).optional().describe('Confidence score (0.3-0.9). Higher = more trusted.'),
     },
     async (input) => {
       getDb();
