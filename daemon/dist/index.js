@@ -10,6 +10,7 @@ import { runDriftDetectorAgent } from './agents/drift-detector.js';
 import { runMoodScorerAgent } from './agents/moodScorer.js';
 import { runSkillAdvisorAgent } from './agents/skillAdvisor.js';
 import { runPatternAgent } from './agents/patternAgent.js';
+import { runBootstrapAgent } from './agents/bootstrap.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf('--project');
@@ -60,6 +61,10 @@ catch { /* ignore */ } });
 // Beim Start: Architekt-Analyse (async, nicht blockierend)
 runArchitectAgent(projectPath).catch(err => {
     process.stderr.write(`[cortex-daemon] Architect error: ${err}\n`);
+});
+// Auto-Bootstrap: DB fuellen wenn quasi leer
+runBootstrapAgent(projectPath).catch(err => {
+    process.stderr.write(`[cortex-daemon] Bootstrap error: ${err}\n`);
 });
 // Queue-Polling alle 500ms
 const queue = new EventQueue(projectPath);
