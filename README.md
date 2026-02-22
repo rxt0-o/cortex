@@ -18,6 +18,8 @@ Cortex gives Claude Code a long-term brain. It tracks every session, remembers e
 | **Health Score** | Daily snapshot: error frequency, open TODOs, convention compliance. Trend over time. |
 | **Unfinished Business** | Tracks abandoned tasks, reminds you on next session start. |
 | **Pin Rules** | `/pin` writes a rule to DB + hookify-compatible `.claude/cortex-pins.local.md`. PreToolUse blocks violations instantly. |
+| **Intent Prediction** | PatternAgent analyzes work patterns (file clusters, task sequences) and predicts what you'll work on next session. Shown at session start. |
+| **Auto-Conventions** | Learner agent automatically extracts coding conventions from sessions and populates the conventions table. |
 | **Skill Self-Improvement** | SkillAdvisor agent autonomously improves `skills/*/SKILL.md` files after each session. |
 | **Agent Monitoring** | Every agent run is logged to DB. `cortex_agent_status` + `cortex_session_metrics` for observability. |
 | **Daemon Resilience** | External watcher process auto-restarts daemon on crash via heartbeat file. |
@@ -108,13 +110,15 @@ SessionStart hook
                                      → Serendipity Agent
                                      → MoodScorer Agent
                                      → SkillAdvisor Agent
+                                     → PatternAgent (file clusters + intent prediction)
+                                     → Architect Agent (post-session, if >5 files changed)
 ```
 
 Each agent runs as a separate `claude -p` subprocess (same Claude Code subscription, no extra API costs). All agents receive a structured context block (recent diffs, hot zones, session delta) via `buildAgentContext()` before their main prompt.
 
 #### Architect Agent
 
-Runs once on daemon start. Reads all known files from the DB (up to 200), asks Claude to map the full-stack architecture (Frontend → Hook → Service → Backend Route → DB table), and saves the result as decisions in the DB.
+Runs on daemon start and after sessions with >5 changed files. Reads all known files from the DB (up to 200), asks Claude to map the full-stack architecture (Frontend → Hook → Service → Backend Route → DB table), and saves the result as decisions in the DB.
 
 #### Context Agent
 
@@ -132,7 +136,7 @@ Triggers on `session_end`. Reads files changed in the last 2 hours and the last 
 - **important** — saved with full context
 - **critical** — saved with `auto_block: true` (blocks future regressions)
 
-Extracts: **learnings** (anti-patterns), **errors**, **facts** (stable project truths), **insights** (broader observations), and **architecture updates**. Every write includes a mandatory `write_gate_reason`. Superseded entries are linked via `superseded_by`.
+Extracts: **learnings** (anti-patterns), **errors**, **facts** (stable project truths), **insights** (broader observations), **conventions** (recurring code patterns), and **architecture updates**. Every write includes a mandatory `write_gate_reason`. Superseded entries are linked via `superseded_by`.
 
 #### Drift Detector Agent
 
@@ -150,13 +154,20 @@ Triggers on `session_end`. Randomly surfaces old learnings or decisions that may
 
 Triggers on `session_end`. Classifies the session's emotional tone (productive, stuck, exploratory, etc.) and writes a rolling mood score used by `cortex_get_mood`.
 
+#### PatternAgent
+
+Triggers on `session_end`. Builds a persistent model of your work patterns:
+
+- **File Clusters:** Identifies files that are frequently edited together using Jaccard similarity. Stored in `work_patterns` table with confidence scores and exponential decay.
+- **Intent Prediction:** Analyzes branch name, recent sessions, unfinished items, work patterns, and time of day to predict what you'll work on next. Uses Haiku by default, falls back to Sonnet after >3 days of inactivity or branch changes. The prediction is stored in `meta` and displayed at next session start.
+
 #### SkillAdvisor Agent
 
 Triggers on `session_end`. Analyzes the transcript and recent diffs, identifies skills that were incomplete or patterns recurring enough to warrant a new skill, and directly edits `skills/*/SKILL.md` files. Changes land uncommitted — visible via `git diff skills/`.
 
 ### MCP Server
 
-A TypeScript MCP server exposes 57 tools for querying and updating the Cortex database. Used by Claude during active sessions.
+A TypeScript MCP server exposes 55+ tools for querying and updating the Cortex database. Used by Claude during active sessions.
 
 ### Event Queue
 
@@ -196,7 +207,8 @@ cortex/
 │   │       ├── synthesizerAgent.ts # Memory consolidation (every 10 sessions)
 │   │       ├── serendipityAgent.ts # Surfaces old learnings randomly
 │   │       ├── moodScorer.ts   # Session mood classification
-│   │       └── skillAdvisor.ts # Autonomous skill improvement (Haiku)
+│   │       ├── skillAdvisor.ts # Autonomous skill improvement (Haiku)
+│   │       └── patternAgent.ts # File clusters + intent prediction
 │   └── dist/                   # Pre-built, ready to run
 │
 ├── server/                     # MCP Server (TypeScript)
@@ -228,12 +240,12 @@ cortex/
 
 ## MCP Tools
 
-57 tools available when the MCP server is running:
+55+ tools available when the MCP server is running:
 
 **Memory & Context**
 | Tool | Description |
 |---|---|
-| `cortex_snapshot` | Full brain state: open items, recent sessions, decisions, learnings |
+| `cortex_snapshot` | Full brain state: open items, recent sessions, decisions, learnings. Now includes intent prediction. |
 | `cortex_get_context` | Relevant context for specific files |
 | `cortex_save_session` | Save/update a session |
 | `cortex_list_sessions` | List recent sessions |
@@ -343,7 +355,7 @@ cortex/
 
 SQLite at `.claude/cortex.db` — one file per project, created automatically on first hook run.
 
-17 tables: `sessions`, `decisions`, `errors`, `learnings`, `facts`, `insights`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `notes`, `schema_version`, `session_metrics`, `agent_runs`.
+18 tables: `sessions`, `decisions`, `errors`, `learnings`, `facts`, `insights`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `notes`, `work_patterns`, `schema_version`, `session_metrics`, `agent_runs`.
 
 Uses `node:sqlite` (Node.js built-in, available since Node 22). Zero native dependencies, no compilation.
 
@@ -354,6 +366,11 @@ Uses `node:sqlite` (Node.js built-in, available since Node 22). Zero native depe
 ```
 -- Project Cortex | Health: 82/100 (+) --
 Branch: main
+
+PREDICTED TASK: Fix team voting regression (85% confident)
+  -> Suggested: Run migration 058 tests first
+  -> Files: backend/routes/teams.py, migrations/058_fix_votes.sql
+  -> Relevant: Decision #3, Error #7
 
 RECENT SESSIONS:
   [2h ago] Fixed team voting bug, created migration 058
