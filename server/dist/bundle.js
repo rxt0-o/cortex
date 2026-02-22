@@ -30280,219 +30280,6 @@ function getRecentSummaries(limit = 3) {
   `).all(limit);
 }
 
-// dist/utils/similarity.js
-var STOPWORDS = /* @__PURE__ */ new Set([
-  "a",
-  "an",
-  "the",
-  "and",
-  "or",
-  "but",
-  "in",
-  "on",
-  "at",
-  "to",
-  "for",
-  "of",
-  "with",
-  "is",
-  "it",
-  "this",
-  "that",
-  "are",
-  "was",
-  "be",
-  "have",
-  "has",
-  "do",
-  "does",
-  "not",
-  "no",
-  "so",
-  "if",
-  "as",
-  "by",
-  "from",
-  "use",
-  "used",
-  "using",
-  "should",
-  "must",
-  "will",
-  "can",
-  "may",
-  "always",
-  "never",
-  "instead",
-  "ein",
-  "eine",
-  "der",
-  "die",
-  "das",
-  "und",
-  "oder",
-  "aber",
-  "zu",
-  "fuer",
-  "von",
-  "mit",
-  "ist",
-  "es",
-  "ich",
-  "wir",
-  "sie",
-  "nicht",
-  "kein",
-  "wie"
-]);
-function tokenize(text) {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !STOPWORDS.has(t));
-}
-function computeTF(tokens) {
-  const tf = /* @__PURE__ */ new Map();
-  for (const t of tokens)
-    tf.set(t, (tf.get(t) ?? 0) + 1);
-  const total = tokens.length || 1;
-  for (const [k, v] of tf)
-    tf.set(k, v / total);
-  return tf;
-}
-function cosineSimilarity(a, b) {
-  let dot = 0, normA = 0, normB = 0;
-  for (const [k, v] of a) {
-    dot += v * (b.get(k) ?? 0);
-    normA += v * v;
-  }
-  for (const v of b.values())
-    normB += v * v;
-  if (normA === 0 || normB === 0)
-    return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-function findSimilar(query, corpus, threshold = (() => {
-  const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? "0.85");
-  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85;
-})()) {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0)
-    return [];
-  const allDocs = [...corpus.map((c) => tokenize(c.text)), queryTokens];
-  const N = allDocs.length;
-  const df = /* @__PURE__ */ new Map();
-  for (const doc of allDocs) {
-    for (const t of new Set(doc))
-      df.set(t, (df.get(t) ?? 0) + 1);
-  }
-  const idf = (term) => Math.log((N + 1) / ((df.get(term) ?? 0) + 1));
-  function tfidfVec(tokens) {
-    const tf = computeTF(tokens);
-    const vec = /* @__PURE__ */ new Map();
-    for (const [t, tfVal] of tf)
-      vec.set(t, tfVal * idf(t));
-    return vec;
-  }
-  const queryVec = tfidfVec(queryTokens);
-  const results = [];
-  for (const entry of corpus) {
-    const score = cosineSimilarity(queryVec, tfidfVec(tokenize(entry.text)));
-    if (score >= threshold)
-      results.push({ id: entry.id, score });
-  }
-  return results.sort((a, b) => b.score - a.score);
-}
-
-// dist/modules/decisions.js
-function addDecision(input) {
-  const db2 = getDb();
-  const existing = db2.prepare("SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200").all();
-  const corpus = existing.map((e) => ({ id: e.id, text: e.title + " " + e.reasoning }));
-  const similar = findSimilar(input.title + " " + input.reasoning, corpus);
-  const result = db2.prepare(`
-    INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? "high");
-  const decision = getDecision(Number(result.lastInsertRowid));
-  if (similar.length > 0) {
-    const top = similar[0];
-    const topEntry = existing.find((e) => e.id === top.id);
-    return {
-      decision,
-      duplicate: {
-        id: top.id,
-        score: Math.round(top.score * 100),
-        title: topEntry?.title ?? ""
-      }
-    };
-  }
-  return { decision };
-}
-function getDecision(id) {
-  const db2 = getDb();
-  const row = db2.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
-  if (!row)
-    return null;
-  db2.prepare("UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
-  return {
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  };
-}
-function listDecisions(options = {}) {
-  const db2 = getDb();
-  const conditions = [];
-  const params = [];
-  conditions.push("archived_at IS NULL");
-  if (options.category) {
-    conditions.push("category = ?");
-    params.push(options.category);
-  }
-  if (!options.includeSuperseded) {
-    conditions.push("superseded_by IS NULL");
-  }
-  let sql = "SELECT * FROM decisions";
-  if (conditions.length > 0) {
-    sql += " WHERE " + conditions.join(" AND ");
-  }
-  sql += " ORDER BY created_at DESC LIMIT ?";
-  params.push(options.limit ?? 20);
-  const rows = db2.prepare(sql).all(...params);
-  return rows.map((row) => ({
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  }));
-}
-function runDecisionsPruning() {
-  const db2 = getDb();
-  const result = db2.prepare(`
-    UPDATE decisions
-    SET archived_at = ?
-    WHERE archived_at IS NULL
-      AND superseded_by IS NULL
-      AND (
-        (created_at < datetime('now', '-90 days') AND access_count = 0)
-        OR
-        (created_at < datetime('now', '-365 days') AND access_count < 3)
-      )
-  `).run(now());
-  return { decisions_archived: Number(result.changes) };
-}
-function getDecisionsForFile(filePath) {
-  const db2 = getDb();
-  const rows = db2.prepare(`
-    SELECT * FROM decisions
-    WHERE files_affected LIKE ?
-    AND superseded_by IS NULL
-    ORDER BY created_at DESC
-  `).all(`%${filePath}%`);
-  return rows.map((row) => ({
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  }));
-}
-
 // dist/modules/errors.js
 import { createHash } from "crypto";
 function createErrorSignature(message) {
@@ -30639,6 +30426,127 @@ function getPreventionRules() {
     SELECT id, prevention_rule, error_message FROM errors
     WHERE prevention_rule IS NOT NULL
   `).all();
+}
+
+// dist/utils/similarity.js
+var STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "is",
+  "it",
+  "this",
+  "that",
+  "are",
+  "was",
+  "be",
+  "have",
+  "has",
+  "do",
+  "does",
+  "not",
+  "no",
+  "so",
+  "if",
+  "as",
+  "by",
+  "from",
+  "use",
+  "used",
+  "using",
+  "should",
+  "must",
+  "will",
+  "can",
+  "may",
+  "always",
+  "never",
+  "instead",
+  "ein",
+  "eine",
+  "der",
+  "die",
+  "das",
+  "und",
+  "oder",
+  "aber",
+  "zu",
+  "fuer",
+  "von",
+  "mit",
+  "ist",
+  "es",
+  "ich",
+  "wir",
+  "sie",
+  "nicht",
+  "kein",
+  "wie"
+]);
+function tokenize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !STOPWORDS.has(t));
+}
+function computeTF(tokens) {
+  const tf = /* @__PURE__ */ new Map();
+  for (const t of tokens)
+    tf.set(t, (tf.get(t) ?? 0) + 1);
+  const total = tokens.length || 1;
+  for (const [k, v] of tf)
+    tf.set(k, v / total);
+  return tf;
+}
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (const [k, v] of a) {
+    dot += v * (b.get(k) ?? 0);
+    normA += v * v;
+  }
+  for (const v of b.values())
+    normB += v * v;
+  if (normA === 0 || normB === 0)
+    return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+function findSimilar(query, corpus, threshold = (() => {
+  const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? "0.85");
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85;
+})()) {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0)
+    return [];
+  const allDocs = [...corpus.map((c) => tokenize(c.text)), queryTokens];
+  const N = allDocs.length;
+  const df = /* @__PURE__ */ new Map();
+  for (const doc of allDocs) {
+    for (const t of new Set(doc))
+      df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const idf = (term) => Math.log((N + 1) / ((df.get(term) ?? 0) + 1));
+  function tfidfVec(tokens) {
+    const tf = computeTF(tokens);
+    const vec = /* @__PURE__ */ new Map();
+    for (const [t, tfVal] of tf)
+      vec.set(t, tfVal * idf(t));
+    return vec;
+  }
+  const queryVec = tfidfVec(queryTokens);
+  const results = [];
+  for (const entry of corpus) {
+    const score = cosineSimilarity(queryVec, tfidfVec(tokenize(entry.text)));
+    if (score >= threshold)
+      results.push({ id: entry.id, score });
+  }
+  return results.sort((a, b) => b.score - a.score);
 }
 
 // dist/modules/learnings.js
@@ -30807,6 +30715,58 @@ function resolveUnfinished(id, resolvedSession) {
     UPDATE unfinished SET resolved_at = ?, resolved_session = ? WHERE id = ?
   `).run(now(), resolvedSession ?? null, id);
   return db2.prepare("SELECT * FROM unfinished WHERE id = ?").get(id);
+}
+
+// dist/modules/health.js
+function calculateHealth() {
+  const db2 = getDb();
+  const openErrors = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL").get().count;
+  const unresolvedUnfinished = db2.prepare("SELECT COUNT(*) as count FROM unfinished WHERE resolved_at IS NULL").get().count;
+  const conventionViolations = db2.prepare("SELECT SUM(violation_count) as total FROM conventions").get().total ?? 0;
+  const hotZoneCount = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE change_count > 20").get().count;
+  const avgChange = db2.prepare("SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0").get().avg ?? 0;
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString();
+  const recentBugs = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL").get(weekAgo).count;
+  const totalFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files").get().count;
+  const typedFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL").get().count;
+  const docCoverage = totalFiles > 0 ? Math.round(typedFiles / totalFiles * 100) : 100;
+  return {
+    openErrors,
+    unresolvedUnfinished,
+    conventionViolations,
+    hotZoneCount,
+    avgChangeFrequency: Math.round(avgChange * 10) / 10,
+    recentBugRate: recentBugs,
+    documentationCoverage: docCoverage
+  };
+}
+function computeScore(metrics) {
+  let score = 100;
+  score -= metrics.openErrors * 5;
+  score -= metrics.unresolvedUnfinished * 2;
+  score -= Math.min(metrics.conventionViolations, 20);
+  score -= metrics.hotZoneCount * 2;
+  score -= metrics.recentBugRate * 3;
+  score += Math.round(metrics.documentationCoverage / 10);
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+function getLatestSnapshot() {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT 1").get();
+  if (!row)
+    return null;
+  return {
+    ...row,
+    metrics: JSON.parse(row.metrics)
+  };
+}
+function getHealthHistory(limit = 30) {
+  const db2 = getDb();
+  const rows = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT ?").all(limit);
+  return rows.map((row) => ({
+    ...row,
+    metrics: JSON.parse(row.metrics)
+  }));
 }
 
 // dist/modules/project-map.js
@@ -31053,48 +31013,273 @@ function extractImports(content, ext) {
   return imports;
 }
 
-// dist/modules/dependencies.js
-function getImports(filePath) {
+// dist/modules/decisions.js
+function addDecision(input) {
   const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM dependencies WHERE source_file = ?").all(filePath);
-  return rows.map((row) => ({
-    ...row,
-    symbols: parseJson(row.symbols)
-  }));
-}
-function getImporters(filePath) {
-  const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM dependencies WHERE target_file = ?").all(filePath);
-  return rows.map((row) => ({
-    ...row,
-    symbols: parseJson(row.symbols)
-  }));
-}
-function getImpactTree(filePath, maxDepth = 3) {
-  const visited = /* @__PURE__ */ new Set();
-  const queue = [{ file: filePath, depth: 0 }];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (visited.has(current.file) || current.depth > maxDepth)
-      continue;
-    visited.add(current.file);
-    const importers = getImporters(current.file);
-    for (const imp of importers) {
-      if (!visited.has(imp.source_file)) {
-        queue.push({ file: imp.source_file, depth: current.depth + 1 });
+  const existing = db2.prepare("SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200").all();
+  const corpus = existing.map((e) => ({ id: e.id, text: e.title + " " + e.reasoning }));
+  const similar = findSimilar(input.title + " " + input.reasoning, corpus);
+  const result = db2.prepare(`
+    INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? "high");
+  const decision = getDecision(Number(result.lastInsertRowid));
+  if (similar.length > 0) {
+    const top = similar[0];
+    const topEntry = existing.find((e) => e.id === top.id);
+    return {
+      decision,
+      duplicate: {
+        id: top.id,
+        score: Math.round(top.score * 100),
+        title: topEntry?.title ?? ""
       }
-    }
+    };
   }
-  visited.delete(filePath);
-  return [...visited];
+  return { decision };
+}
+function getDecision(id) {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
+  if (!row)
+    return null;
+  db2.prepare("UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
+  return {
+    ...row,
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
+  };
+}
+function listDecisions(options = {}) {
+  const db2 = getDb();
+  const conditions = [];
+  const params = [];
+  conditions.push("archived_at IS NULL");
+  if (options.category) {
+    conditions.push("category = ?");
+    params.push(options.category);
+  }
+  if (!options.includeSuperseded) {
+    conditions.push("superseded_by IS NULL");
+  }
+  let sql = "SELECT * FROM decisions";
+  if (conditions.length > 0) {
+    sql += " WHERE " + conditions.join(" AND ");
+  }
+  sql += " ORDER BY created_at DESC LIMIT ?";
+  params.push(options.limit ?? 20);
+  const rows = db2.prepare(sql).all(...params);
+  return rows.map((row) => ({
+    ...row,
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
+  }));
+}
+function runDecisionsPruning() {
+  const db2 = getDb();
+  const result = db2.prepare(`
+    UPDATE decisions
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND superseded_by IS NULL
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { decisions_archived: Number(result.changes) };
+}
+function getDecisionsForFile(filePath) {
+  const db2 = getDb();
+  const rows = db2.prepare(`
+    SELECT * FROM decisions
+    WHERE files_affected LIKE ?
+    AND superseded_by IS NULL
+    ORDER BY created_at DESC
+  `).all(`%${filePath}%`);
+  return rows.map((row) => ({
+    ...row,
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
+  }));
 }
 
-// dist/modules/diffs.js
-function getDiffsForFile(filePath, limit = 20) {
-  const db2 = getDb();
-  return db2.prepare(`
-    SELECT * FROM diffs WHERE file_path = ? ORDER BY created_at DESC LIMIT ?
-  `).all(filePath, limit);
+// dist/helpers.js
+function runAllPruning() {
+  const d = runDecisionsPruning();
+  const l = runLearningsPruning();
+  const e = runErrorsPruning();
+  return {
+    decisions_archived: d.decisions_archived,
+    learnings_archived: l.learnings_archived,
+    errors_archived: e.errors_archived
+  };
+}
+
+// dist/tools/sessions.js
+function registerSessionTools(server2) {
+  server2.tool("cortex_save_session", "Save or update a session with summary, changes, decisions, errors, and learnings", {
+    session_id: external_exports3.string(),
+    summary: external_exports3.string().optional(),
+    key_changes: external_exports3.array(external_exports3.object({
+      file: external_exports3.string(),
+      action: external_exports3.string(),
+      description: external_exports3.string()
+    })).optional(),
+    status: external_exports3.enum(["active", "completed", "abandoned"]).optional()
+  }, async ({ session_id, summary, key_changes, status }) => {
+    getDb();
+    createSession({ id: session_id });
+    if (!status || status === "active") {
+      try {
+        runAllPruning();
+      } catch {
+      }
+    }
+    const session = updateSession(session_id, {
+      summary,
+      key_changes,
+      status,
+      ended_at: status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : void 0
+    });
+    return { content: [{ type: "text", text: JSON.stringify(session, null, 2) }] };
+  });
+  server2.tool("cortex_list_sessions", "List recent sessions with summaries", {
+    limit: external_exports3.number().optional(),
+    chain_id: external_exports3.string().optional(),
+    tag: external_exports3.string().optional()
+  }, async ({ limit, chain_id, tag }) => {
+    getDb();
+    let result = listSessions(limit ?? 20, chain_id);
+    if (tag) {
+      result = result.filter((s) => s.tags?.includes(tag));
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  });
+  server2.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings", {
+    query: external_exports3.string(),
+    limit: external_exports3.number().optional()
+  }, async ({ query, limit }) => {
+    const db2 = getDb();
+    const maxResults = limit ?? 10;
+    const lines = [];
+    function ftsSearch(ftsTable, labelFn, prefix) {
+      try {
+        const rows = db2.prepare("SELECT rowid, * FROM " + ftsTable + " WHERE " + ftsTable + " MATCH ? ORDER BY bm25(" + ftsTable + ") LIMIT ?").all(query, maxResults);
+        for (const r of rows)
+          lines.push(prefix + " " + labelFn(r));
+      } catch {
+      }
+    }
+    ftsSearch("learnings_fts", (r) => r.anti_pattern, "[LEARNING]");
+    ftsSearch("decisions_fts", (r) => r.title, "[DECISION]");
+    ftsSearch("errors_fts", (r) => r.error_message, "[ERROR]");
+    ftsSearch("notes_fts", (r) => String(r.text).slice(0, 120), "[NOTE]");
+    try {
+      const sr = db2.prepare("SELECT summary FROM sessions WHERE summary LIKE ? AND status != 'active' ORDER BY started_at DESC LIMIT ?").all("%" + query + "%", maxResults);
+      for (const s of sr)
+        lines.push("[SESSION] " + s.summary);
+    } catch {
+    }
+    try {
+      const ur = db2.prepare("SELECT description FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?").all("%" + query + "%", maxResults);
+      for (const u of ur)
+        lines.push("[TODO] " + u.description);
+    } catch {
+    }
+    return { content: [{ type: "text", text: lines.join("\n") || "No results." }] };
+  });
+  server2.tool("cortex_get_context", "Get relevant context for specific files or the current work", {
+    files: external_exports3.array(external_exports3.string()).optional()
+  }, async ({ files }) => {
+    getDb();
+    const context = {};
+    context.recentSessions = getRecentSummaries(3);
+    context.unfinished = listUnfinished({ limit: 10 });
+    if (files && files.length > 0) {
+      context.fileErrors = getErrorsForFiles(files);
+    }
+    context.activeLearnings = listLearnings({ autoBlockOnly: true });
+    context.health = getLatestSnapshot();
+    context.projectMap = getModuleSummary();
+    return { content: [{ type: "text", text: JSON.stringify(context, null, 2) }] };
+  });
+}
+
+// dist/tools/decisions.js
+function registerDecisionTools(server2) {
+  server2.tool("cortex_add_decision", "Log an architectural or design decision with reasoning", {
+    title: external_exports3.string().describe('Short title of the decision. Example: "Use SQLite for local persistence" or "Adopt BM25/FTS5 for full-text search"'),
+    reasoning: external_exports3.string().describe('WHY this decision was made. Include trade-offs and context. Example: "SQLite is embedded, zero-config, and sufficient for single-user local tool. Postgres would add deployment complexity."'),
+    category: external_exports3.enum(["architecture", "convention", "bugfix", "feature", "config", "security"]).describe("Category: architecture=structural choices, convention=code style, bugfix=fix rationale, feature=new functionality, config=settings/env, security=security choices"),
+    files_affected: external_exports3.array(external_exports3.string()).optional().describe('File paths affected by this decision. Example: ["server/src/db.ts", "scripts/ensure-db.js"]'),
+    alternatives: external_exports3.array(external_exports3.object({
+      option: external_exports3.string().describe('Alternative that was considered. Example: "Use PostgreSQL"'),
+      reason_rejected: external_exports3.string().describe('Why this alternative was rejected. Example: "Too heavy for local single-user tool"')
+    })).optional(),
+    session_id: external_exports3.string().optional(),
+    confidence: external_exports3.enum(["high", "medium", "low"]).optional().describe("Confidence level: high=certain, medium=likely good, low=experimental/uncertain")
+  }, async (input) => {
+    getDb();
+    const { decision, duplicate } = addDecision(input);
+    let text = "Decision saved (id: " + decision.id + ")";
+    if (duplicate) {
+      text += "\nWarning: Possible duplicate of Decision #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.title + '"';
+    }
+    return { content: [{ type: "text", text }] };
+  });
+  server2.tool("cortex_list_decisions", "List architectural decisions, optionally filtered by category", {
+    category: external_exports3.string().optional(),
+    limit: external_exports3.number().optional()
+  }, async ({ category, limit }) => {
+    getDb();
+    const result = listDecisions({ category, limit });
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  });
+  server2.tool("cortex_mark_decision_reviewed", "Mark a decision as reviewed / still current (resets stale flag)", { id: external_exports3.number() }, async ({ id }) => {
+    getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(id);
+    return { content: [{ type: "text", text: `Decision ${id} marked as reviewed.` }] };
+  });
+}
+
+// dist/tools/errors.js
+function registerErrorTools(server2) {
+  server2.tool("cortex_add_error", "Record an error with optional root cause, fix, and prevention rule", {
+    error_message: external_exports3.string().describe(`The error that occurred. Example: "TypeError: Cannot read property 'id' of undefined in sessions.updateSession" or "FTS5 table not found: learnings_fts"`),
+    root_cause: external_exports3.string().optional().describe('WHY it happened. Example: "Session was not created before updateSession was called" or "ensure-db.js ran before FTS5 virtual tables were defined"'),
+    fix_description: external_exports3.string().optional().describe('How it was fixed. Example: "Added createSession() call before updateSession() in cortex_save_session handler"'),
+    fix_diff: external_exports3.string().optional().describe("The actual code diff that fixed it (optional, for future reference)"),
+    files_involved: external_exports3.array(external_exports3.string()).optional().describe('Files where the error occurred. Example: ["server/src/index.ts", "server/src/modules/sessions.ts"]'),
+    prevention_rule: external_exports3.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession(" or "FTS5"'),
+    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional().describe("Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down"),
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    const error48 = addError(input);
+    return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
+  });
+  server2.tool("cortex_list_errors", "List known errors, optionally filtered by severity or file", {
+    severity: external_exports3.string().optional(),
+    file: external_exports3.string().optional(),
+    limit: external_exports3.number().optional()
+  }, async (input) => {
+    getDb();
+    const result = listErrors(input);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  });
+  server2.tool("cortex_update_error", "Update an existing error record \u2014 add fix description, prevention rule, or change severity", {
+    id: external_exports3.number(),
+    fix_description: external_exports3.string().optional(),
+    root_cause: external_exports3.string().optional(),
+    fix_diff: external_exports3.string().optional(),
+    prevention_rule: external_exports3.string().optional(),
+    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional()
+  }, async (input) => {
+    getDb();
+    const error48 = updateError(input);
+    return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
+  });
 }
 
 // dist/modules/conventions.js
@@ -31162,56 +31347,343 @@ function parseConventionRow(row) {
   };
 }
 
-// dist/modules/health.js
-function calculateHealth() {
-  const db2 = getDb();
-  const openErrors = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL").get().count;
-  const unresolvedUnfinished = db2.prepare("SELECT COUNT(*) as count FROM unfinished WHERE resolved_at IS NULL").get().count;
-  const conventionViolations = db2.prepare("SELECT SUM(violation_count) as total FROM conventions").get().total ?? 0;
-  const hotZoneCount = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE change_count > 20").get().count;
-  const avgChange = db2.prepare("SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0").get().avg ?? 0;
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString();
-  const recentBugs = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL").get(weekAgo).count;
-  const totalFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files").get().count;
-  const typedFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL").get().count;
-  const docCoverage = totalFiles > 0 ? Math.round(typedFiles / totalFiles * 100) : 100;
-  return {
-    openErrors,
-    unresolvedUnfinished,
-    conventionViolations,
-    hotZoneCount,
-    avgChangeFrequency: Math.round(avgChange * 10) / 10,
-    recentBugRate: recentBugs,
-    documentationCoverage: docCoverage
-  };
+// dist/tools/learnings.js
+function registerLearningTools(server2) {
+  server2.tool("cortex_add_learning", "Record an anti-pattern and its correct alternative, optionally with auto-blocking regex", {
+    anti_pattern: external_exports3.string().describe('The bad pattern to avoid. Example: "Using db.prepare() inside a loop" or "Calling getDb() without checking if DB is initialized"'),
+    correct_pattern: external_exports3.string().describe('The correct alternative to use instead. Example: "Prepare statements once outside the loop and reuse" or "Always call ensureDb() before getDb()"'),
+    context: external_exports3.string().describe('When/where this applies. Example: "SQLite better-sqlite3 usage" or "Cortex server startup sequence"'),
+    detection_regex: external_exports3.string().optional().describe('Regex to auto-detect this pattern in code. Example: "db.prepare(.*).*.run(" or "for.*getDb()"'),
+    severity: external_exports3.enum(["low", "medium", "high"]).optional().describe("Impact: low=minor quality issue, medium=likely bug, high=will cause failures"),
+    auto_block: external_exports3.boolean().optional().describe("If true, cortex_check_regression will flag this pattern before every file edit"),
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    const { learning, duplicate } = addLearning(input);
+    let text = "Learning saved (id: " + learning.id + ")";
+    if (duplicate) {
+      text += "\nWarning: Possible duplicate of Learning #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.anti_pattern + '"';
+    }
+    return { content: [{ type: "text", text }] };
+  });
+  server2.tool("cortex_update_learning", "Update an existing learning/anti-pattern entry (e.g. add detection_regex, change severity, toggle auto_block)", {
+    id: external_exports3.number(),
+    anti_pattern: external_exports3.string().optional(),
+    correct_pattern: external_exports3.string().optional(),
+    detection_regex: external_exports3.string().nullable().optional(),
+    context: external_exports3.string().optional(),
+    severity: external_exports3.enum(["low", "medium", "high"]).optional(),
+    auto_block: external_exports3.boolean().optional()
+  }, async (input) => {
+    getDb();
+    const learning = updateLearning(input);
+    return { content: [{ type: "text", text: JSON.stringify(learning, null, 2) }] };
+  });
+  server2.tool("cortex_delete_learning", "Delete a learning/anti-pattern entry by ID", { id: external_exports3.number() }, async ({ id }) => {
+    getDb();
+    const success2 = deleteLearning(id);
+    return { content: [{ type: "text", text: JSON.stringify({ success: success2, deleted_id: id }, null, 2) }] };
+  });
+  server2.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional() }, async ({ auto_block_only, limit }) => {
+    getDb();
+    const result = listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  });
+  server2.tool("cortex_check_regression", "Check if content would introduce a known regression or anti-pattern", {
+    file_path: external_exports3.string(),
+    content: external_exports3.string()
+  }, async ({ file_path, content }) => {
+    getDb();
+    const warnings = [];
+    const learningMatches = checkContentAgainstLearnings(content);
+    for (const m of learningMatches) {
+      warnings.push({
+        type: "anti-pattern",
+        message: `Anti-pattern: "${m.learning.anti_pattern}" \u2192 Use: "${m.learning.correct_pattern}"`,
+        severity: m.learning.severity
+      });
+    }
+    const conventionMatches = checkContentAgainstConventions(content);
+    for (const m of conventionMatches) {
+      warnings.push({
+        type: "convention-violation",
+        message: `Convention "${m.convention.name}": ${m.convention.description}`,
+        severity: "warning"
+      });
+    }
+    const preventionRules = getPreventionRules();
+    for (const rule of preventionRules) {
+      try {
+        if (new RegExp(rule.prevention_rule, "m").test(content)) {
+          warnings.push({
+            type: "regression",
+            message: `This pattern caused Error #${rule.id}: "${rule.error_message}"`,
+            severity: "error"
+          });
+        }
+      } catch {
+      }
+    }
+    return {
+      content: [{
+        type: "text",
+        text: warnings.length > 0 ? JSON.stringify({ blocked: warnings.some((w) => w.severity === "error"), warnings }, null, 2) : '{"blocked": false, "warnings": []}'
+      }]
+    };
+  });
 }
-function computeScore(metrics) {
-  let score = 100;
-  score -= metrics.openErrors * 5;
-  score -= metrics.unresolvedUnfinished * 2;
-  score -= Math.min(metrics.conventionViolations, 20);
-  score -= metrics.hotZoneCount * 2;
-  score -= metrics.recentBugRate * 3;
-  score += Math.round(metrics.documentationCoverage / 10);
-  return Math.max(0, Math.min(100, Math.round(score)));
-}
-function getLatestSnapshot() {
+
+// dist/modules/dependencies.js
+function getImports(filePath) {
   const db2 = getDb();
-  const row = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT 1").get();
-  if (!row)
-    return null;
-  return {
-    ...row,
-    metrics: JSON.parse(row.metrics)
-  };
-}
-function getHealthHistory(limit = 30) {
-  const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT ?").all(limit);
+  const rows = db2.prepare("SELECT * FROM dependencies WHERE source_file = ?").all(filePath);
   return rows.map((row) => ({
     ...row,
-    metrics: JSON.parse(row.metrics)
+    symbols: parseJson(row.symbols)
   }));
+}
+function getImporters(filePath) {
+  const db2 = getDb();
+  const rows = db2.prepare("SELECT * FROM dependencies WHERE target_file = ?").all(filePath);
+  return rows.map((row) => ({
+    ...row,
+    symbols: parseJson(row.symbols)
+  }));
+}
+function getImpactTree(filePath, maxDepth = 3) {
+  const visited = /* @__PURE__ */ new Set();
+  const queue = [{ file: filePath, depth: 0 }];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (visited.has(current.file) || current.depth > maxDepth)
+      continue;
+    visited.add(current.file);
+    const importers = getImporters(current.file);
+    for (const imp of importers) {
+      if (!visited.has(imp.source_file)) {
+        queue.push({ file: imp.source_file, depth: current.depth + 1 });
+      }
+    }
+  }
+  visited.delete(filePath);
+  return [...visited];
+}
+
+// dist/modules/diffs.js
+function getDiffsForFile(filePath, limit = 20) {
+  const db2 = getDb();
+  return db2.prepare(`
+    SELECT * FROM diffs WHERE file_path = ? ORDER BY created_at DESC LIMIT ?
+  `).all(filePath, limit);
+}
+
+// dist/tools/project-map.js
+function registerProjectMapTools(server2) {
+  server2.tool("cortex_get_deps", "Get dependency tree and impact analysis for a file", {
+    file_path: external_exports3.string()
+  }, async ({ file_path }) => {
+    getDb();
+    const imports = getImports(file_path);
+    const importers = getImporters(file_path);
+    const impact = getImpactTree(file_path);
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ imports, importers, impactedFiles: impact }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_get_map", "Get project architecture map \u2014 modules, layers, files", {
+    module: external_exports3.string().optional()
+  }, async ({ module }) => {
+    getDb();
+    if (module) {
+      const mod = getModuleByPath(module);
+      return { content: [{ type: "text", text: JSON.stringify(mod, null, 2) }] };
+    }
+    const summary = getModuleSummary();
+    return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+  });
+  server2.tool("cortex_update_map", "Re-scan the project and update the architecture map", { root_path: external_exports3.string().optional() }, async ({ root_path }) => {
+    getDb();
+    const result = scanProject(root_path ?? process.cwd());
+    return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+  });
+  server2.tool("cortex_scan_project", "Scan project filesystem and populate architecture map with all files, modules and dependencies", { root_path: external_exports3.string().optional() }, async ({ root_path }) => {
+    getDb();
+    const result = scanProject(root_path ?? process.cwd());
+    return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+  });
+  server2.tool("cortex_index_docs", "Read CLAUDE.md and docs/ markdown files and store as searchable learnings and decisions", { docs_path: external_exports3.string().optional() }, async ({ docs_path }) => {
+    getDb();
+    const { readFileSync, readdirSync, existsSync } = await import("fs");
+    const { join } = await import("path");
+    const root = docs_path ?? process.cwd();
+    const stats = { gotchas: 0, decisions: 0, docs_indexed: 0 };
+    const claudeMdPath = join(root, "CLAUDE.md");
+    if (existsSync(claudeMdPath)) {
+      const content = readFileSync(claudeMdPath, "utf-8");
+      const gotchaRe = /- \*\*#(\d+)[^*]*\*\*\s*[—-]\s*([^\n]+)/g;
+      let m;
+      while (m = gotchaRe.exec(content)) {
+        const num = m[1];
+        const title = m[2].trim();
+        try {
+          addLearning({
+            anti_pattern: `Gotcha #${num}: ${title}`,
+            correct_pattern: title,
+            context: `CLAUDE.md Gotcha #${num}`,
+            severity: "medium",
+            auto_block: false
+          });
+          stats.gotchas++;
+        } catch {
+        }
+      }
+      stats.docs_indexed++;
+    }
+    const docsDir = join(root, "docs");
+    if (existsSync(docsDir)) {
+      const mdFiles = readdirSync(docsDir).filter((f) => f.endsWith(".md"));
+      for (const file2 of mdFiles) {
+        try {
+          const content = readFileSync(join(docsDir, file2), "utf-8");
+          const sectionRe = /^## (.+)\n([\s\S]*?)(?=\n## |$)/gm;
+          let sm;
+          while (sm = sectionRe.exec(content)) {
+            const title = sm[1].trim();
+            const body = sm[2].trim();
+            if (body.length < 30)
+              continue;
+            try {
+              addDecision({
+                title: `[${file2}] ${title}`,
+                reasoning: body.slice(0, 1e3),
+                category: "architecture",
+                confidence: "high"
+              });
+              stats.decisions++;
+            } catch {
+            }
+          }
+          stats.docs_indexed++;
+        } catch {
+        }
+      }
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ success: true, ...stats }, null, 2) }] };
+  });
+  server2.tool("cortex_get_hot_zones", "Get most frequently changed files \u2014 refactoring candidates", {
+    limit: external_exports3.number().optional()
+  }, async ({ limit }) => {
+    getDb();
+    const zones = getHotZones(limit ?? 20);
+    return { content: [{ type: "text", text: JSON.stringify(zones, null, 2) }] };
+  });
+  server2.tool("cortex_get_file_history", "Get complete history for a file: sessions, diffs, errors", {
+    file_path: external_exports3.string()
+  }, async ({ file_path }) => {
+    getDb();
+    const fileDiffs = getDiffsForFile(file_path);
+    const fileErrors = listErrors({ file: file_path });
+    const fileDecisions = getDecisionsForFile(file_path);
+    const fileInfo = getFileByPath(file_path);
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ file: fileInfo, diffs: fileDiffs, errors: fileErrors, decisions: fileDecisions }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_import_git_history", "Import git log history to populate Hot Zones with historical file change frequency", {
+    root_path: external_exports3.string().optional(),
+    max_commits: external_exports3.number().optional()
+  }, async ({ root_path, max_commits }) => {
+    const { execFileSync } = await import("child_process");
+    const cwd = root_path ?? process.cwd();
+    const limit = max_commits ?? 500;
+    let gitOutput;
+    try {
+      gitOutput = execFileSync("git", ["log", `--max-count=${limit}`, "--name-only", "--pretty=format:"], { cwd, encoding: "utf-8" });
+    } catch (e) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "git log failed", detail: String(e) }) }] };
+    }
+    const db2 = getDb();
+    const fileCounts = /* @__PURE__ */ new Map();
+    for (const line of gitOutput.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed)
+        continue;
+      if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed))
+        continue;
+      fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
+    }
+    const stmt = db2.prepare(`
+        INSERT INTO project_files (path, change_count, last_changed)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(path) DO UPDATE SET
+          change_count = MAX(project_files.change_count, excluded.change_count)
+      `);
+    let imported = 0;
+    for (const [path3, count] of fileCounts) {
+      stmt.run(path3, count);
+      imported++;
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify({ success: true, files_imported: imported, commits_analyzed: limit }, null, 2) }]
+    };
+  });
+}
+
+// dist/tools/tracking.js
+function registerTrackingTools(server2) {
+  server2.tool("cortex_get_unfinished", "Get open/unresolved items \u2014 things that were started but not completed", {}, async () => {
+    getDb();
+    const items = listUnfinished();
+    return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] };
+  });
+  server2.tool("cortex_add_unfinished", "Track something that needs to be done later", {
+    description: external_exports3.string().describe('What needs to be done. Example: "Implement RRF fusion for cortex_search (BM25 + embeddings)" or "Add input_examples to tool definitions"'),
+    context: external_exports3.string().optional().describe('Why it matters / relevant links. Example: "See https://github.com/oraios/serena \u2014 LSP-based symbol navigation, 30+ languages"'),
+    priority: external_exports3.enum(["low", "medium", "high"]).optional().describe("Priority: low=nice-to-have, medium=should do soon, high=blocking or urgent"),
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    const item = addUnfinished(input);
+    return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }] };
+  });
+  server2.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/done", { id: external_exports3.number(), session_id: external_exports3.string().optional() }, async ({ id, session_id }) => {
+    getDb();
+    const item = resolveUnfinished(id, session_id);
+    return {
+      content: [{ type: "text", text: JSON.stringify({ success: !!item, item }, null, 2) }]
+    };
+  });
+  server2.tool("cortex_add_intent", "Store a stated intention for follow-up in future sessions", {
+    intent: external_exports3.string().describe("What you plan to do next"),
+    session_id: external_exports3.string().optional()
+  }, async ({ intent, session_id }) => {
+    const db2 = getDb();
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    db2.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(session_id ?? `intent-${ts}`, ts);
+    db2.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(session_id ?? null, ts, `[INTENT] ${intent}`);
+    return { content: [{ type: "text", text: `Intent stored: "${intent}"` }] };
+  });
+  server2.tool("cortex_snooze", "Schedule a future session reminder", {
+    description: external_exports3.string(),
+    until: external_exports3.string().describe("Relative 3d/1w or ISO date 2026-03-01"),
+    session_id: external_exports3.string().optional()
+  }, async ({ description, until, session_id }) => {
+    let d = /* @__PURE__ */ new Date();
+    if (/^\d+d$/i.test(until))
+      d.setDate(d.getDate() + parseInt(until));
+    else if (/^\d+w$/i.test(until))
+      d.setDate(d.getDate() + parseInt(until) * 7);
+    else
+      d = new Date(until);
+    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until) VALUES (?,?,?,?,?)`).run(description, "snoozed", "medium", session_id ?? null, d.toISOString());
+    return { content: [{ type: "text", text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
+  });
 }
 
 // dist/analyzer/diff-extractor.js
@@ -31330,6 +31802,665 @@ function summarizeFunctionChanges(diff) {
   return diff.filePath + " -> " + chunks.map((c) => c.functionName + "() +" + c.linesAdded + "/-" + c.linesRemoved).join(", ");
 }
 
+// dist/tools/intelligence.js
+function registerIntelligenceTools(server2) {
+  server2.tool("cortex_blame", "Show full history for a file: diffs, errors, decisions", { file_path: external_exports3.string() }, async ({ file_path }) => {
+    const db2 = getDb();
+    const lines = [`=== History for ${file_path} ===`];
+    try {
+      const fileDiffs = db2.prepare(`SELECT d.created_at, d.change_type, s.summary FROM diffs d LEFT JOIN sessions s ON s.id=d.session_id WHERE d.file_path LIKE ? ORDER BY d.created_at DESC LIMIT 10`).all(`%${file_path}%`);
+      if (fileDiffs.length > 0) {
+        lines.push("DIFFS:");
+        for (const d of fileDiffs)
+          lines.push(`  [${d.created_at?.slice(0, 10)}] ${d.change_type ?? "modified"} \u2014 ${d.summary ?? ""}`);
+      }
+    } catch {
+    }
+    try {
+      const fileErrors = db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE files_involved LIKE ? ORDER BY last_seen DESC LIMIT 5`).all(`%${file_path}%`);
+      if (fileErrors.length > 0) {
+        lines.push("ERRORS:");
+        for (const e of fileErrors)
+          lines.push(`  [${e.severity}] ${e.error_message}${e.fix_description ? " \u2192 " + e.fix_description : ""}`);
+      }
+    } catch {
+    }
+    try {
+      const fileDecisions = db2.prepare(`SELECT title, category, created_at FROM decisions WHERE files_affected LIKE ? ORDER BY created_at DESC LIMIT 5`).all(`%${file_path}%`);
+      if (fileDecisions.length > 0) {
+        lines.push("DECISIONS:");
+        for (const d of fileDecisions)
+          lines.push(`  [${d.category}] ${d.title}`);
+      }
+    } catch {
+    }
+    try {
+      const rawDiffs = db2.prepare("SELECT diff_content FROM diffs WHERE file_path LIKE ? ORDER BY created_at DESC LIMIT 5").all("%" + file_path + "%");
+      const fnChanges = [];
+      for (const d of rawDiffs) {
+        if (!d.diff_content)
+          continue;
+        for (const fileDiff of parseDiff(d.diff_content)) {
+          const s = summarizeFunctionChanges(fileDiff);
+          if (!s.includes("no changes"))
+            fnChanges.push("  " + s);
+        }
+      }
+      if (fnChanges.length > 0) {
+        lines.push("FUNCTION CHANGES:");
+        lines.push(...fnChanges);
+      }
+    } catch {
+    }
+    return { content: [{ type: "text", text: lines.join("\n") || "No history found." }] };
+  });
+  server2.tool("cortex_snapshot", "Get a concise brain snapshot \u2014 top state, intents, mood, drift, anchors", {}, async () => {
+    const db2 = getDb();
+    const md = [`# Brain Snapshot \u2014 ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 16).replace("T", " ")}`, ""];
+    try {
+      const moodSessions = db2.prepare(`SELECT mood_score FROM sessions WHERE mood_score IS NOT NULL ORDER BY started_at DESC LIMIT 7`).all();
+      if (moodSessions.length > 0) {
+        const avg = moodSessions.reduce((s, r) => s + r.mood_score, 0) / moodSessions.length;
+        md.push(`**Mood:** ${avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative"} (${avg.toFixed(1)}/5)`);
+      }
+    } catch {
+    }
+    try {
+      const open = db2.prepare(`SELECT description, priority FROM unfinished WHERE resolved_at IS NULL ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END LIMIT 5`).all();
+      if (open.length > 0) {
+        md.push("");
+        md.push(`## Open Items (${open.length})`);
+        for (const u of open)
+          md.push(`- [${u.priority}] ${u.description}`);
+      }
+    } catch {
+    }
+    try {
+      const intents = db2.prepare(`SELECT description FROM unfinished WHERE context='intent' AND resolved_at IS NULL LIMIT 3`).all();
+      if (intents.length > 0) {
+        md.push("");
+        md.push("## Intents");
+        for (const i of intents)
+          md.push(`- ${i.description.replace("[INTENT] ", "")}`);
+      }
+    } catch {
+    }
+    try {
+      const anchors = db2.prepare(`SELECT topic, priority FROM attention_anchors ORDER BY priority DESC LIMIT 5`).all();
+      if (anchors.length > 0) {
+        md.push("");
+        md.push("## Attention Anchors");
+        for (const a of anchors)
+          md.push(`- ${a.topic} (p${a.priority})`);
+      }
+    } catch {
+    }
+    try {
+      const drift = db2.prepare(`SELECT description FROM unfinished WHERE description LIKE '[DRIFT]%' AND resolved_at IS NULL LIMIT 3`).all();
+      if (drift.length > 0) {
+        md.push("");
+        md.push("## Drift Warnings");
+        for (const d of drift)
+          md.push(`- ${d.description}`);
+      }
+    } catch {
+    }
+    try {
+      const stale = db2.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get();
+      if (stale?.c > 0) {
+        md.push("");
+        md.push(`## Stale Decisions: ${stale.c} (>90 days old \u2014 review needed)`);
+      }
+    } catch {
+    }
+    try {
+      const recent = db2.prepare(`
+          SELECT id, started_at, summary, key_changes FROM sessions
+          WHERE status='completed' AND summary IS NOT NULL
+          ORDER BY started_at DESC LIMIT 10
+        `).all();
+      if (recent.length > 0) {
+        md.push("");
+        md.push("## Recent Sessions");
+        for (let i = 0; i < recent.length; i++) {
+          const s = recent[i];
+          const date5 = s.started_at?.slice(0, 10) ?? "?";
+          if (i < 3) {
+            md.push(`- [${date5}] ${s.summary}`);
+            if (s.key_changes) {
+              try {
+                const changes = JSON.parse(s.key_changes);
+                for (const c of changes.slice(0, 3)) {
+                  md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
+                }
+              } catch {
+              }
+            }
+          } else {
+            const summary = s.summary ?? "";
+            md.push(`- [${date5}] ${summary.slice(0, 80)}${summary.length > 80 ? "..." : ""}`);
+          }
+        }
+      }
+    } catch {
+    }
+    try {
+      const recentDecisions = db2.prepare(`
+          SELECT id, title, category, reasoning FROM decisions
+          WHERE archived_at IS NULL AND superseded_by IS NULL
+            AND created_at > datetime('now', '-7 days')
+          ORDER BY created_at DESC LIMIT 5
+        `).all();
+      const olderDecisionsCount = db2.prepare(`
+          SELECT COUNT(*) as c FROM decisions
+          WHERE archived_at IS NULL AND superseded_by IS NULL
+            AND created_at <= datetime('now', '-7 days')
+        `).get()?.c ?? 0;
+      if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
+        md.push("");
+        md.push("## Decisions");
+        for (const d of recentDecisions) {
+          const r = d.reasoning ?? "";
+          md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? "..." : ""}`);
+        }
+        if (olderDecisionsCount > 0) {
+          md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
+        }
+      }
+    } catch {
+    }
+    try {
+      const autoBlocks = db2.prepare(`
+          SELECT anti_pattern, correct_pattern FROM learnings
+          WHERE auto_block = 1 AND archived_at IS NULL
+        `).all();
+      const recentLearnings = db2.prepare(`
+          SELECT anti_pattern, correct_pattern, severity FROM learnings
+          WHERE auto_block = 0 AND archived_at IS NULL
+            AND created_at > datetime('now', '-7 days')
+          ORDER BY created_at DESC LIMIT 5
+        `).all();
+      const olderLearningsCount = db2.prepare(`
+          SELECT COUNT(*) as c FROM learnings
+          WHERE auto_block = 0 AND archived_at IS NULL
+            AND created_at <= datetime('now', '-7 days')
+        `).get()?.c ?? 0;
+      if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
+        md.push("");
+        md.push("## Learnings");
+        if (autoBlocks.length > 0) {
+          md.push("**Auto-Block Rules:**");
+          for (const l of autoBlocks) {
+            md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
+          }
+        }
+        for (const l of recentLearnings) {
+          md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
+        }
+        if (olderLearningsCount > 0) {
+          md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
+        }
+      }
+    } catch {
+    }
+    return { content: [{ type: "text", text: md.join("\n") }] };
+  });
+  server2.tool("cortex_dejavu", "Check if a task looks similar to past sessions (deja-vu detection)", { task_description: external_exports3.string() }, async ({ task_description }) => {
+    const db2 = getDb();
+    const keywords = task_description.split(/\s+/).filter((w) => w.length > 4).slice(0, 8);
+    if (keywords.length === 0)
+      return { content: [{ type: "text", text: "No keywords to match." }] };
+    const lines = [];
+    for (const kw of keywords) {
+      try {
+        const matches = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? AND status='completed' ORDER BY started_at DESC LIMIT 2`).all(`%${kw}%`);
+        for (const m of matches)
+          lines.push(`[${m.started_at?.slice(0, 10)}] ${m.summary}`);
+      } catch {
+      }
+    }
+    const unique = [...new Set(lines)].slice(0, 10);
+    return { content: [{ type: "text", text: unique.length > 0 ? `Deja-vu matches:
+${unique.join("\n")}` : "No similar sessions found." }] };
+  });
+  server2.tool("cortex_check_blind_spots", "Find project files not touched in recent sessions \u2014 potential blind spots", { days: external_exports3.number().optional().default(14), limit: external_exports3.number().optional().default(10) }, async ({ days, limit }) => {
+    const db2 = getDb();
+    try {
+      const untouched = db2.prepare(`
+          SELECT path, change_count, last_changed FROM project_files
+          WHERE (last_changed IS NULL OR last_changed < datetime('now', ? || ' days'))
+            AND change_count > 0
+          ORDER BY change_count DESC LIMIT ?
+        `).all(`-${days}`, limit);
+      if (untouched.length === 0) {
+        return { content: [{ type: "text", text: "No blind spots detected \u2014 all active files touched recently." }] };
+      }
+      const lines = [`Blind spots (not touched in ${days}d):`];
+      for (const f of untouched) {
+        lines.push(`  ${f.path} (${f.change_count} total changes, last: ${f.last_changed?.slice(0, 10) ?? "never"})`);
+      }
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_forget", "Archive (soft-delete) decisions, errors, and learnings matching a topic", { topic: external_exports3.string().describe("Keyword or phrase to match against") }, async ({ topic }) => {
+    const db2 = getDb();
+    const pat = `%${topic}%`;
+    let archived = 0;
+    try {
+      const r = db2.prepare(`UPDATE decisions SET archived=1 WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1`).run(pat, pat);
+      archived += Number(r.changes);
+    } catch {
+    }
+    try {
+      const r = db2.prepare(`UPDATE errors SET archived=1 WHERE (error_message LIKE ? OR root_cause LIKE ?) AND archived!=1`).run(pat, pat);
+      archived += Number(r.changes);
+    } catch {
+    }
+    try {
+      const r = db2.prepare(`UPDATE learnings SET archived=1 WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1`).run(pat, pat);
+      archived += Number(r.changes);
+    } catch {
+    }
+    return { content: [{ type: "text", text: `Archived ${archived} item(s) matching "${topic}".` }] };
+  });
+  server2.tool("cortex_get_mood", "Get current system mood based on rolling average of last 7 sessions", {}, async () => {
+    const db2 = getDb();
+    try {
+      const sessions = db2.prepare(`
+          SELECT emotional_tone, mood_score, started_at FROM sessions
+          WHERE mood_score IS NOT NULL AND status='completed'
+          ORDER BY started_at DESC LIMIT 7
+        `).all();
+      if (sessions.length === 0) {
+        return { content: [{ type: "text", text: "No mood data yet. Mood scoring runs after sessions complete." }] };
+      }
+      const avg = sessions.reduce((s, r) => s + (r.mood_score ?? 3), 0) / sessions.length;
+      const mood = avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative";
+      const lines = [
+        `System Mood: ${mood} (avg ${avg.toFixed(1)}/5 over last ${sessions.length} sessions)`,
+        "",
+        "Recent sessions:",
+        ...sessions.map((s) => `  [${s.started_at?.slice(0, 10)}] ${s.emotional_tone ?? "unknown"} (${s.mood_score}/5)`)
+      ];
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_cross_project_search", "Search across all projects in this Cortex DB", { query: external_exports3.string(), limit: external_exports3.number().optional().default(10) }, async ({ query, limit }) => {
+    const db2 = getDb();
+    const pat = `%${query}%`;
+    const lines = [];
+    try {
+      const sessions = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?`).all(pat, limit);
+      for (const s of sessions)
+        lines.push(`[SESSION] ${s.started_at?.slice(0, 10)}: ${s.summary}`);
+    } catch {
+    }
+    try {
+      const decisions = db2.prepare(`SELECT title, category FROM decisions WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
+      for (const d of decisions)
+        lines.push(`[DECISION/${d.category}] ${d.title}`);
+    } catch {
+    }
+    try {
+      const learnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
+      for (const l of learnings)
+        lines.push(`[LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
+    } catch {
+    }
+    try {
+      const notes = db2.prepare(`SELECT text, project, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(pat, limit);
+      for (const n of notes)
+        lines.push(`[NOTE${n.project ? "/" + n.project : ""}] ${n.text.slice(0, 100)}`);
+    } catch {
+    }
+    return { content: [{ type: "text", text: lines.join("\n") || "No cross-project results found." }] };
+  });
+}
+
+// dist/tools/stats.js
+function registerStatsTools(server2) {
+  server2.tool("cortex_get_health", "Get project health score with metrics and trend", {}, async () => {
+    getDb();
+    const snapshot = getLatestSnapshot();
+    const history = getHealthHistory(7);
+    const metrics = calculateHealth();
+    const score = computeScore(metrics);
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ currentScore: score, metrics, latestSnapshot: snapshot, recentHistory: history }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_get_stats", "Get overall project statistics: sessions, decisions, errors, files, learnings", {}, async () => {
+    const db2 = getDb();
+    const q = (sql) => db2.prepare(sql).get().c;
+    const stats = {
+      sessions: q("SELECT COUNT(*) as c FROM sessions"),
+      decisions: q("SELECT COUNT(*) as c FROM decisions"),
+      errors: q("SELECT COUNT(*) as c FROM errors"),
+      learnings: q("SELECT COUNT(*) as c FROM learnings"),
+      conventions: q("SELECT COUNT(*) as c FROM conventions"),
+      files_tracked: q("SELECT COUNT(*) as c FROM project_files"),
+      modules: q("SELECT COUNT(*) as c FROM project_modules"),
+      dependencies: q("SELECT COUNT(*) as c FROM dependencies"),
+      unfinished_open: q("SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL")
+    };
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+  });
+  server2.tool("cortex_get_access_stats", "Show top accessed decisions, learnings and errors -- what gets used most", {}, async () => {
+    const db2 = getDb();
+    const topDecisions = db2.prepare(`
+        SELECT id, title, category, access_count, last_accessed
+        FROM decisions WHERE archived_at IS NULL
+        ORDER BY access_count DESC LIMIT 10
+      `).all();
+    const topLearnings = db2.prepare(`
+        SELECT id, anti_pattern, severity, access_count, last_accessed
+        FROM learnings WHERE archived_at IS NULL
+        ORDER BY access_count DESC LIMIT 10
+      `).all();
+    const topErrors = db2.prepare(`
+        SELECT id, error_message, severity, access_count, last_accessed
+        FROM errors WHERE archived_at IS NULL
+        ORDER BY access_count DESC LIMIT 10
+      `).all();
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_run_pruning", "Manually run Ebbinghaus pruning \u2014 archives unused decisions/learnings/errors. Runs automatically on session start.", {}, async () => {
+    getDb();
+    const result = runAllPruning();
+    const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          archived: result,
+          total_archived: total,
+          message: total > 0 ? `${total} item(s) archived based on Ebbinghaus forgetting curve.` : "Nothing to archive -- all items are fresh or recently accessed."
+        }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_get_timeline", "Get monthly activity timeline", { limit: external_exports3.number().optional().default(12) }, async ({ limit }) => {
+    const db2 = getDb();
+    try {
+      const rows = db2.prepare(`
+          SELECT strftime('%Y-%m', started_at) as month, COUNT(*) as sessions,
+                 GROUP_CONCAT(SUBSTR(summary, 1, 60), ' | ') as summaries
+          FROM sessions WHERE summary IS NOT NULL
+          GROUP BY month ORDER BY month DESC LIMIT ?
+        `).all(limit);
+      const lines = rows.map((r) => `[${r.month}] ${r.sessions} sessions \u2014 ${r.summaries?.slice(0, 200) ?? ""}`);
+      return { content: [{ type: "text", text: lines.join("\n") || "No timeline data." }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_compare_periods", "Compare activity between two date ranges", {
+    from_a: external_exports3.string().describe("Start of period A (YYYY-MM-DD)"),
+    to_a: external_exports3.string().describe("End of period A (YYYY-MM-DD)"),
+    from_b: external_exports3.string().describe("Start of period B (YYYY-MM-DD)"),
+    to_b: external_exports3.string().describe("End of period B (YYYY-MM-DD)")
+  }, async ({ from_a, to_a, from_b, to_b }) => {
+    const db2 = getDb();
+    const count = (sql, ...p) => {
+      try {
+        return db2.prepare(sql).get(...p)?.c ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+    const periodA = {
+      sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_a, to_a),
+      errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_a, to_a),
+      fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_a, to_a),
+      files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_a, to_a)
+    };
+    const periodB = {
+      sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_b, to_b),
+      errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_b, to_b),
+      fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_b, to_b),
+      files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_b, to_b)
+    };
+    return { content: [{ type: "text", text: JSON.stringify({ periodA: { range: `${from_a} to ${to_a}`, ...periodA }, periodB: { range: `${from_b} to ${to_b}`, ...periodB } }, null, 2) }] };
+  });
+  server2.tool("cortex_suggest_claude_md", "Suggest CLAUDE.md updates based on new learnings and patterns", {}, async () => {
+    getDb();
+    const recentLearnings = listLearnings({ limit: 10 });
+    const topConventions = listConventions();
+    const frequentErrors = listErrors({ limit: 5 });
+    const suggestions = [];
+    for (const learning of recentLearnings) {
+      if (learning.occurrences >= 2) {
+        suggestions.push(`New Gotcha: ${learning.anti_pattern} \u2192 ${learning.correct_pattern} (occurred ${learning.occurrences}x)`);
+      }
+    }
+    for (const conv of topConventions) {
+      if (conv.violation_count >= 3 && conv.source !== "claude-md") {
+        suggestions.push(`Convention to add: ${conv.name} \u2014 ${conv.description} (${conv.violation_count} violations)`);
+      }
+    }
+    for (const error48 of frequentErrors) {
+      if (error48.occurrences >= 3 && error48.prevention_rule) {
+        suggestions.push(`Error pattern to document: ${error48.error_message} (${error48.occurrences}x)`);
+      }
+    }
+    return {
+      content: [{
+        type: "text",
+        text: suggestions.length > 0 ? JSON.stringify({ suggestions }, null, 2) : '{"suggestions": [], "message": "No new suggestions \u2014 CLAUDE.md is up to date."}'
+      }]
+    };
+  });
+}
+
+// dist/tools/profile.js
+function registerProfileTools(server2) {
+  server2.tool("cortex_update_profile", "Update user profile (name, role, working style, expertise, communication preference)", {
+    name: external_exports3.string().optional(),
+    role: external_exports3.string().optional(),
+    working_style: external_exports3.string().optional(),
+    expertise_areas: external_exports3.string().optional(),
+    communication_preference: external_exports3.string().optional()
+  }, async (input) => {
+    const db2 = getDb();
+    db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, communication_preference, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+          name=COALESCE(excluded.name, name),
+          role=COALESCE(excluded.role, role),
+          working_style=COALESCE(excluded.working_style, working_style),
+          expertise_areas=COALESCE(excluded.expertise_areas, expertise_areas),
+          communication_preference=COALESCE(excluded.communication_preference, communication_preference),
+          updated_at=datetime('now')`).run(input.name ?? null, input.role ?? null, input.working_style ?? null, input.expertise_areas ?? null, input.communication_preference ?? null);
+    return { content: [{ type: "text", text: "Profile updated." }] };
+  });
+  server2.tool("cortex_get_profile", "Get the user profile", {}, async () => {
+    const db2 = getDb();
+    try {
+      const profile = db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get();
+      if (!profile)
+        return { content: [{ type: "text", text: "No profile set. Use cortex_update_profile to create one." }] };
+      const lines = [
+        `Name: ${profile.name ?? "(not set)"}`,
+        `Role: ${profile.role ?? "(not set)"}`,
+        `Working Style: ${profile.working_style ?? "(not set)"}`,
+        `Expertise: ${profile.expertise_areas ?? "(not set)"}`,
+        `Communication: ${profile.communication_preference ?? "(not set)"}`,
+        `Updated: ${profile.updated_at?.slice(0, 10) ?? "never"}`
+      ];
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_onboard", "Run first-time onboarding: set up user profile and attention anchors", {
+    name: external_exports3.string().describe("Your name"),
+    role: external_exports3.string().describe("Your role (e.g. solo developer, lead engineer)"),
+    working_style: external_exports3.string().describe("How you prefer to work (e.g. test-driven, prototype-first)"),
+    expertise_areas: external_exports3.string().describe("Your main areas of expertise (comma-separated)"),
+    anchors: external_exports3.array(external_exports3.string()).describe("3-5 topics you always want Cortex to track").optional()
+  }, async ({ name, role, working_style, expertise_areas, anchors }) => {
+    const db2 = getDb();
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, updated_at)
+        VALUES (1, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,
+          working_style=excluded.working_style, expertise_areas=excluded.expertise_areas,
+          updated_at=datetime('now')`).run(name, role, working_style, expertise_areas);
+    const addedAnchors = [];
+    if (anchors && anchors.length > 0) {
+      for (const topic of anchors.slice(0, 5)) {
+        try {
+          db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, 8)`).run(topic);
+          addedAnchors.push(topic);
+        } catch {
+        }
+      }
+    }
+    db2.prepare(`INSERT INTO meta (key, value) VALUES ('onboarding_complete', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ts);
+    const lines = [
+      `Welcome, ${name}! Cortex is now configured.`,
+      `Role: ${role}`,
+      `Working style: ${working_style}`,
+      `Expertise: ${expertise_areas}`,
+      addedAnchors.length > 0 ? `Anchors: ${addedAnchors.join(", ")}` : "",
+      "",
+      "Cortex will now track your sessions, decisions, errors, and learnings.",
+      "Use /resume to get a re-entry brief at any time."
+    ].filter((l) => l !== "");
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  });
+  server2.tool("cortex_export", "Export brain data as JSON or Markdown", { format: external_exports3.enum(["json", "markdown"]).optional().default("markdown") }, async ({ format }) => {
+    const db2 = getDb();
+    try {
+      const data = {
+        exported_at: (/* @__PURE__ */ new Date()).toISOString(),
+        profile: db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get() ?? {},
+        sessions: db2.prepare(`SELECT id, started_at, summary, tags, emotional_tone, mood_score FROM sessions WHERE status='completed' ORDER BY started_at DESC LIMIT 50`).all(),
+        decisions: db2.prepare(`SELECT title, category, reasoning, created_at FROM decisions WHERE archived!=1 ORDER BY created_at DESC LIMIT 30`).all(),
+        learnings: db2.prepare(`SELECT anti_pattern, correct_pattern, severity, occurrences FROM learnings WHERE archived!=1 ORDER BY occurrences DESC LIMIT 50`).all(),
+        errors: db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE archived!=1 ORDER BY occurrences DESC LIMIT 30`).all(),
+        unfinished: db2.prepare(`SELECT description, priority, created_at FROM unfinished WHERE resolved_at IS NULL ORDER BY created_at DESC`).all(),
+        notes: (() => {
+          try {
+            return db2.prepare(`SELECT text, tags, created_at FROM notes ORDER BY created_at DESC LIMIT 30`).all();
+          } catch {
+            return [];
+          }
+        })()
+      };
+      if (format === "json") {
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      }
+      const md = [`# Brain Export \u2014 ${data.exported_at.slice(0, 10)}`, ""];
+      md.push(`## Profile`);
+      const p = data.profile;
+      if (p?.name)
+        md.push(`**${p.name}** \xB7 ${p.role ?? ""} \xB7 ${p.working_style ?? ""}`);
+      md.push("");
+      md.push(`## Open Items (${data.unfinished.length})`);
+      for (const u of data.unfinished)
+        md.push(`- [${u.priority}] ${u.description}`);
+      md.push("");
+      md.push(`## Key Learnings (${data.learnings.length})`);
+      for (const l of data.learnings)
+        md.push(`- **${l.anti_pattern}** \u2192 ${l.correct_pattern} (${l.occurrences}x)`);
+      md.push("");
+      md.push(`## Recent Sessions (${data.sessions.length})`);
+      for (const s of data.sessions)
+        md.push(`- [${s.started_at?.slice(0, 10)}] ${s.summary ?? ""}`);
+      return { content: [{ type: "text", text: md.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Export error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_add_note", "Add scratch pad note", {
+    text: external_exports3.string(),
+    tags: external_exports3.array(external_exports3.string()).optional(),
+    session_id: external_exports3.string().optional()
+  }, async ({ text, tags, session_id }) => {
+    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
+    return { content: [{ type: "text", text: `Note saved (id: ${r.lastInsertRowid})` }] };
+  });
+  server2.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
+    limit: external_exports3.number().optional().default(20),
+    search: external_exports3.string().optional()
+  }, async ({ limit, search }) => {
+    const db2 = getDb();
+    const notes = search ? db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit) : db2.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
+    return { content: [{ type: "text", text: notes.map((n) => `[${n.id}] ${n.created_at.slice(0, 10)}: ${n.text}`).join("\n") || "No notes." }] };
+  });
+  server2.tool("cortex_delete_note", "Delete note by id", {
+    id: external_exports3.number()
+  }, async ({ id }) => {
+    getDb().prepare(`DELETE FROM notes WHERE id=?`).run(id);
+    return { content: [{ type: "text", text: `Deleted note ${id}` }] };
+  });
+  server2.tool("cortex_add_anchor", "Add an attention anchor \u2014 a topic that always gets priority context", { topic: external_exports3.string(), priority: external_exports3.number().optional().default(5) }, async ({ topic, priority }) => {
+    const db2 = getDb();
+    try {
+      db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
+      return { content: [{ type: "text", text: `Anchor added: "${topic}" (priority ${priority})` }] };
+    } catch {
+      return { content: [{ type: "text", text: `Anchor "${topic}" already exists or could not be added.` }] };
+    }
+  });
+  server2.tool("cortex_remove_anchor", "Remove an attention anchor by topic", { topic: external_exports3.string() }, async ({ topic }) => {
+    const db2 = getDb();
+    const r = db2.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
+    return { content: [{ type: "text", text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
+  });
+  server2.tool("cortex_list_anchors", "List all attention anchors", {}, async () => {
+    const db2 = getDb();
+    try {
+      const anchors = db2.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all();
+      if (anchors.length === 0)
+        return { content: [{ type: "text", text: "No attention anchors set." }] };
+      const lines = anchors.map((a) => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0, 10) ?? "never"})`);
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e}` }] };
+    }
+  });
+  server2.tool("cortex_set_project", "Set the active project name for context tagging", { project: external_exports3.string() }, async ({ project }) => {
+    const db2 = getDb();
+    db2.prepare(`INSERT INTO meta (key, value) VALUES ('active_project', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(project);
+    return { content: [{ type: "text", text: `Active project set to: "${project}"` }] };
+  });
+  server2.tool("cortex_get_conventions", "List active conventions with violation counts", {
+    scope: external_exports3.string().optional()
+  }, async ({ scope }) => {
+    getDb();
+    const convs = listConventions(scope);
+    return { content: [{ type: "text", text: JSON.stringify(convs, null, 2) }] };
+  });
+  server2.tool("cortex_add_convention", "Add or update a coding convention with detection/violation patterns", {
+    name: external_exports3.string().describe('Short convention name. Example: "No raw SQL in route handlers" or "Always use prepared statements"'),
+    description: external_exports3.string().describe('What the convention requires. Example: "All DB queries must go through module functions in server/src/modules/, never inline SQL in index.ts"'),
+    detection_pattern: external_exports3.string().optional().describe('Regex to detect correct usage. Example: "import.*modules/"'),
+    violation_pattern: external_exports3.string().optional().describe('Regex to detect violations. Example: "db\\.prepare\\(.*SELECT.*\\).*index\\.ts"'),
+    examples_good: external_exports3.array(external_exports3.string()).optional().describe('Examples of correct code. Example: ["sessions.createSession({ id })", "decisions.addDecision(input)"]'),
+    examples_bad: external_exports3.array(external_exports3.string()).optional().describe(`Examples of incorrect code. Example: ["db.prepare('SELECT * FROM sessions').all()"]`),
+    scope: external_exports3.enum(["global", "frontend", "backend", "database"]).optional(),
+    source: external_exports3.string().optional().describe('Where this convention comes from. Example: "CLAUDE.md" or "code review 2026-02-22"')
+  }, async (input) => {
+    getDb();
+    const conv = addConvention(input);
+    return { content: [{ type: "text", text: JSON.stringify(conv, null, 2) }] };
+  });
+}
+
 // dist/modules/tool-registry.js
 var TOOL_CATEGORIES = {
   memory: `## Memory & Context Tools
@@ -31428,17 +32559,22 @@ function getToolGuidance(categories) {
 }
 var PRELOAD_GUIDANCE = getToolGuidance(["memory", "tracking"]);
 
-// dist/index.js
-function runAllPruning() {
-  const d = runDecisionsPruning();
-  const l = runLearningsPruning();
-  const e = runErrorsPruning();
-  return {
-    decisions_archived: d.decisions_archived,
-    learnings_archived: l.learnings_archived,
-    errors_archived: e.errors_archived
-  };
+// dist/tools/meta.js
+function registerMetaTools(server2) {
+  server2.tool("cortex_load_tools", "Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.", {
+    categories: external_exports3.array(external_exports3.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(", ")}`)).describe('List of categories to load guidance for. Example: ["memory", "decisions"]')
+  }, async ({ categories }) => {
+    getDb();
+    try {
+      const guidance = getToolGuidance(categories);
+      return { content: [{ type: "text", text: guidance }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: err.message }] };
+    }
+  });
 }
+
+// dist/index.js
 var CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
 
 TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
@@ -31454,1100 +32590,16 @@ TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
 RULES: Always call cortex_check_regression before writing/editing files.
 Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;
 var server = new McpServer({ name: "project-cortex", version: "0.1.0" }, { instructions: CORTEX_INSTRUCTIONS });
-server.tool("cortex_save_session", "Save or update a session with summary, changes, decisions, errors, and learnings", {
-  session_id: external_exports3.string(),
-  summary: external_exports3.string().optional(),
-  key_changes: external_exports3.array(external_exports3.object({
-    file: external_exports3.string(),
-    action: external_exports3.string(),
-    description: external_exports3.string()
-  })).optional(),
-  status: external_exports3.enum(["active", "completed", "abandoned"]).optional()
-}, async ({ session_id, summary, key_changes, status }) => {
-  getDb();
-  createSession({ id: session_id });
-  if (!status || status === "active") {
-    try {
-      runAllPruning();
-    } catch {
-    }
-  }
-  const session = updateSession(session_id, {
-    summary,
-    key_changes,
-    status,
-    ended_at: status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : void 0
-  });
-  return { content: [{ type: "text", text: JSON.stringify(session, null, 2) }] };
-});
-server.tool("cortex_list_sessions", "List recent sessions with summaries", {
-  limit: external_exports3.number().optional(),
-  chain_id: external_exports3.string().optional(),
-  tag: external_exports3.string().optional()
-}, async ({ limit, chain_id, tag }) => {
-  getDb();
-  let result = listSessions(limit ?? 20, chain_id);
-  if (tag) {
-    result = result.filter((s) => s.tags?.includes(tag));
-  }
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-});
-server.tool("cortex_run_pruning", "Manually run Ebbinghaus pruning \u2014 archives unused decisions/learnings/errors. Runs automatically on session start.", {}, async () => {
-  getDb();
-  const result = runAllPruning();
-  const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({
-        archived: result,
-        total_archived: total,
-        message: total > 0 ? `${total} item(s) archived based on Ebbinghaus forgetting curve.` : "Nothing to archive -- all items are fresh or recently accessed."
-      }, null, 2)
-    }]
-  };
-});
-server.tool("cortex_get_access_stats", "Show top accessed decisions, learnings and errors -- what gets used most", {}, async () => {
-  const db2 = getDb();
-  const topDecisions = db2.prepare(`
-      SELECT id, title, category, access_count, last_accessed
-      FROM decisions WHERE archived_at IS NULL
-      ORDER BY access_count DESC LIMIT 10
-    `).all();
-  const topLearnings = db2.prepare(`
-      SELECT id, anti_pattern, severity, access_count, last_accessed
-      FROM learnings WHERE archived_at IS NULL
-      ORDER BY access_count DESC LIMIT 10
-    `).all();
-  const topErrors = db2.prepare(`
-      SELECT id, error_message, severity, access_count, last_accessed
-      FROM errors WHERE archived_at IS NULL
-      ORDER BY access_count DESC LIMIT 10
-    `).all();
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2)
-    }]
-  };
-});
-server.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings", {
-  query: external_exports3.string(),
-  limit: external_exports3.number().optional()
-}, async ({ query, limit }) => {
-  const db2 = getDb();
-  const maxResults = limit ?? 10;
-  const lines = [];
-  function ftsSearch(ftsTable, labelFn, prefix) {
-    try {
-      const rows = db2.prepare("SELECT rowid, * FROM " + ftsTable + " WHERE " + ftsTable + " MATCH ? ORDER BY bm25(" + ftsTable + ") LIMIT ?").all(query, maxResults);
-      for (const r of rows)
-        lines.push(prefix + " " + labelFn(r));
-    } catch {
-    }
-  }
-  ftsSearch("learnings_fts", (r) => r.anti_pattern, "[LEARNING]");
-  ftsSearch("decisions_fts", (r) => r.title, "[DECISION]");
-  ftsSearch("errors_fts", (r) => r.error_message, "[ERROR]");
-  ftsSearch("notes_fts", (r) => String(r.text).slice(0, 120), "[NOTE]");
-  try {
-    const sr = db2.prepare("SELECT summary FROM sessions WHERE summary LIKE ? AND status != 'active' ORDER BY started_at DESC LIMIT ?").all("%" + query + "%", maxResults);
-    for (const s of sr)
-      lines.push("[SESSION] " + s.summary);
-  } catch {
-  }
-  try {
-    const ur = db2.prepare("SELECT description FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?").all("%" + query + "%", maxResults);
-    for (const u of ur)
-      lines.push("[TODO] " + u.description);
-  } catch {
-  }
-  return { content: [{ type: "text", text: lines.join("\n") || "No results." }] };
-});
-server.tool("cortex_get_context", "Get relevant context for specific files or the current work", {
-  files: external_exports3.array(external_exports3.string()).optional()
-}, async ({ files }) => {
-  getDb();
-  const context = {};
-  context.recentSessions = getRecentSummaries(3);
-  context.unfinished = listUnfinished({ limit: 10 });
-  if (files && files.length > 0) {
-    context.fileErrors = getErrorsForFiles(files);
-  }
-  context.activeLearnings = listLearnings({ autoBlockOnly: true });
-  context.health = getLatestSnapshot();
-  context.projectMap = getModuleSummary();
-  return { content: [{ type: "text", text: JSON.stringify(context, null, 2) }] };
-});
-server.tool("cortex_add_decision", "Log an architectural or design decision with reasoning", {
-  title: external_exports3.string().describe('Short title of the decision. Example: "Use SQLite for local persistence" or "Adopt BM25/FTS5 for full-text search"'),
-  reasoning: external_exports3.string().describe('WHY this decision was made. Include trade-offs and context. Example: "SQLite is embedded, zero-config, and sufficient for single-user local tool. Postgres would add deployment complexity."'),
-  category: external_exports3.enum(["architecture", "convention", "bugfix", "feature", "config", "security"]).describe("Category: architecture=structural choices, convention=code style, bugfix=fix rationale, feature=new functionality, config=settings/env, security=security choices"),
-  files_affected: external_exports3.array(external_exports3.string()).optional().describe('File paths affected by this decision. Example: ["server/src/db.ts", "scripts/ensure-db.js"]'),
-  alternatives: external_exports3.array(external_exports3.object({
-    option: external_exports3.string().describe('Alternative that was considered. Example: "Use PostgreSQL"'),
-    reason_rejected: external_exports3.string().describe('Why this alternative was rejected. Example: "Too heavy for local single-user tool"')
-  })).optional(),
-  session_id: external_exports3.string().optional(),
-  confidence: external_exports3.enum(["high", "medium", "low"]).optional().describe("Confidence level: high=certain, medium=likely good, low=experimental/uncertain")
-}, async (input) => {
-  getDb();
-  const { decision, duplicate } = addDecision(input);
-  let text = "Decision saved (id: " + decision.id + ")";
-  if (duplicate) {
-    text += "\nWarning: Possible duplicate of Decision #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.title + '"';
-  }
-  return { content: [{ type: "text", text }] };
-});
-server.tool("cortex_list_decisions", "List architectural decisions, optionally filtered by category", {
-  category: external_exports3.string().optional(),
-  limit: external_exports3.number().optional()
-}, async ({ category, limit }) => {
-  getDb();
-  const result = listDecisions({ category, limit });
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-});
-server.tool("cortex_mark_decision_reviewed", "Mark a decision as reviewed / still current (resets stale flag)", { id: external_exports3.number() }, async ({ id }) => {
-  getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(id);
-  return { content: [{ type: "text", text: `Decision ${id} marked as reviewed.` }] };
-});
-server.tool("cortex_add_error", "Record an error with optional root cause, fix, and prevention rule", {
-  error_message: external_exports3.string().describe(`The error that occurred. Example: "TypeError: Cannot read property 'id' of undefined in sessions.updateSession" or "FTS5 table not found: learnings_fts"`),
-  root_cause: external_exports3.string().optional().describe('WHY it happened. Example: "Session was not created before updateSession was called" or "ensure-db.js ran before FTS5 virtual tables were defined"'),
-  fix_description: external_exports3.string().optional().describe('How it was fixed. Example: "Added createSession() call before updateSession() in cortex_save_session handler"'),
-  fix_diff: external_exports3.string().optional().describe("The actual code diff that fixed it (optional, for future reference)"),
-  files_involved: external_exports3.array(external_exports3.string()).optional().describe('Files where the error occurred. Example: ["server/src/index.ts", "server/src/modules/sessions.ts"]'),
-  prevention_rule: external_exports3.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession\\(" or "FTS5"'),
-  severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional().describe("Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down"),
-  session_id: external_exports3.string().optional()
-}, async (input) => {
-  getDb();
-  const error48 = addError(input);
-  return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
-});
-server.tool("cortex_list_errors", "List known errors, optionally filtered by severity or file", {
-  severity: external_exports3.string().optional(),
-  file: external_exports3.string().optional(),
-  limit: external_exports3.number().optional()
-}, async (input) => {
-  getDb();
-  const result = listErrors(input);
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-});
-server.tool("cortex_add_learning", "Record an anti-pattern and its correct alternative, optionally with auto-blocking regex", {
-  anti_pattern: external_exports3.string().describe('The bad pattern to avoid. Example: "Using db.prepare() inside a loop" or "Calling getDb() without checking if DB is initialized"'),
-  correct_pattern: external_exports3.string().describe('The correct alternative to use instead. Example: "Prepare statements once outside the loop and reuse" or "Always call ensureDb() before getDb()"'),
-  context: external_exports3.string().describe('When/where this applies. Example: "SQLite better-sqlite3 usage" or "Cortex server startup sequence"'),
-  detection_regex: external_exports3.string().optional().describe('Regex to auto-detect this pattern in code. Example: "db\\.prepare\\(.*\\).*\\.run\\(" or "for.*getDb\\(\\)"'),
-  severity: external_exports3.enum(["low", "medium", "high"]).optional().describe("Impact: low=minor quality issue, medium=likely bug, high=will cause failures"),
-  auto_block: external_exports3.boolean().optional().describe("If true, cortex_check_regression will flag this pattern before every file edit"),
-  session_id: external_exports3.string().optional()
-}, async (input) => {
-  getDb();
-  const { learning, duplicate } = addLearning(input);
-  let text = "Learning saved (id: " + learning.id + ")";
-  if (duplicate) {
-    text += "\nWarning: Possible duplicate of Learning #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.anti_pattern + '"';
-  }
-  return { content: [{ type: "text", text }] };
-});
-server.tool("cortex_get_deps", "Get dependency tree and impact analysis for a file", {
-  file_path: external_exports3.string()
-}, async ({ file_path }) => {
-  getDb();
-  const imports = getImports(file_path);
-  const importers = getImporters(file_path);
-  const impact = getImpactTree(file_path);
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({ imports, importers, impactedFiles: impact }, null, 2)
-    }]
-  };
-});
-server.tool("cortex_get_map", "Get project architecture map \u2014 modules, layers, files", {
-  module: external_exports3.string().optional()
-}, async ({ module }) => {
-  getDb();
-  if (module) {
-    const mod = getModuleByPath(module);
-    return { content: [{ type: "text", text: JSON.stringify(mod, null, 2) }] };
-  }
-  const summary = getModuleSummary();
-  return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
-});
-server.tool("cortex_update_map", "Re-scan the project and update the architecture map", { root_path: external_exports3.string().optional() }, async ({ root_path }) => {
-  getDb();
-  const result = scanProject(root_path ?? process.cwd());
-  return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
-});
-server.tool("cortex_scan_project", "Scan project filesystem and populate architecture map with all files, modules and dependencies", { root_path: external_exports3.string().optional() }, async ({ root_path }) => {
-  getDb();
-  const result = scanProject(root_path ?? process.cwd());
-  return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
-});
-server.tool("cortex_index_docs", "Read CLAUDE.md and docs/ markdown files and store as searchable learnings and decisions", { docs_path: external_exports3.string().optional() }, async ({ docs_path }) => {
-  getDb();
-  const { readFileSync, readdirSync, existsSync } = await import("fs");
-  const { join } = await import("path");
-  const root = docs_path ?? process.cwd();
-  const stats = { gotchas: 0, decisions: 0, docs_indexed: 0 };
-  const claudeMdPath = join(root, "CLAUDE.md");
-  if (existsSync(claudeMdPath)) {
-    const content = readFileSync(claudeMdPath, "utf-8");
-    const gotchaRe = /- \*\*#(\d+)[^*]*\*\*\s*[—-]\s*([^\n]+)/g;
-    let m;
-    while (m = gotchaRe.exec(content)) {
-      const num = m[1];
-      const title = m[2].trim();
-      try {
-        addLearning({
-          anti_pattern: `Gotcha #${num}: ${title}`,
-          correct_pattern: title,
-          context: `CLAUDE.md Gotcha #${num}`,
-          severity: "medium",
-          auto_block: false
-        });
-        stats.gotchas++;
-      } catch {
-      }
-    }
-    stats.docs_indexed++;
-  }
-  const docsDir = join(root, "docs");
-  if (existsSync(docsDir)) {
-    const mdFiles = readdirSync(docsDir).filter((f) => f.endsWith(".md"));
-    for (const file2 of mdFiles) {
-      try {
-        const content = readFileSync(join(docsDir, file2), "utf-8");
-        const sectionRe = /^## (.+)\n([\s\S]*?)(?=\n## |$)/gm;
-        let sm;
-        while (sm = sectionRe.exec(content)) {
-          const title = sm[1].trim();
-          const body = sm[2].trim();
-          if (body.length < 30)
-            continue;
-          try {
-            addDecision({
-              title: `[${file2}] ${title}`,
-              reasoning: body.slice(0, 1e3),
-              category: "architecture",
-              confidence: "high"
-            });
-            stats.decisions++;
-          } catch {
-          }
-        }
-        stats.docs_indexed++;
-      } catch {
-      }
-    }
-  }
-  return { content: [{ type: "text", text: JSON.stringify({ success: true, ...stats }, null, 2) }] };
-});
-server.tool("cortex_get_hot_zones", "Get most frequently changed files \u2014 refactoring candidates", {
-  limit: external_exports3.number().optional()
-}, async ({ limit }) => {
-  getDb();
-  const zones = getHotZones(limit ?? 20);
-  return { content: [{ type: "text", text: JSON.stringify(zones, null, 2) }] };
-});
-server.tool("cortex_get_file_history", "Get complete history for a file: sessions, diffs, errors", {
-  file_path: external_exports3.string()
-}, async ({ file_path }) => {
-  getDb();
-  const fileDiffs = getDiffsForFile(file_path);
-  const fileErrors = listErrors({ file: file_path });
-  const fileDecisions = getDecisionsForFile(file_path);
-  const fileInfo = getFileByPath(file_path);
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({ file: fileInfo, diffs: fileDiffs, errors: fileErrors, decisions: fileDecisions }, null, 2)
-    }]
-  };
-});
-server.tool("cortex_get_health", "Get project health score with metrics and trend", {}, async () => {
-  getDb();
-  const snapshot = getLatestSnapshot();
-  const history = getHealthHistory(7);
-  const metrics = calculateHealth();
-  const score = computeScore(metrics);
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({ currentScore: score, metrics, latestSnapshot: snapshot, recentHistory: history }, null, 2)
-    }]
-  };
-});
-server.tool("cortex_get_unfinished", "Get open/unresolved items \u2014 things that were started but not completed", {}, async () => {
-  getDb();
-  const items = listUnfinished();
-  return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] };
-});
-server.tool("cortex_add_unfinished", "Track something that needs to be done later", {
-  description: external_exports3.string().describe('What needs to be done. Example: "Implement RRF fusion for cortex_search (BM25 + embeddings)" or "Add input_examples to tool definitions"'),
-  context: external_exports3.string().optional().describe('Why it matters / relevant links. Example: "See https://github.com/oraios/serena \u2014 LSP-based symbol navigation, 30+ languages"'),
-  priority: external_exports3.enum(["low", "medium", "high"]).optional().describe("Priority: low=nice-to-have, medium=should do soon, high=blocking or urgent"),
-  session_id: external_exports3.string().optional()
-}, async (input) => {
-  getDb();
-  const item = addUnfinished(input);
-  return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }] };
-});
-server.tool("cortex_get_conventions", "List active conventions with violation counts", {
-  scope: external_exports3.string().optional()
-}, async ({ scope }) => {
-  getDb();
-  const convs = listConventions(scope);
-  return { content: [{ type: "text", text: JSON.stringify(convs, null, 2) }] };
-});
-server.tool("cortex_add_convention", "Add or update a coding convention with detection/violation patterns", {
-  name: external_exports3.string().describe('Short convention name. Example: "No raw SQL in route handlers" or "Always use prepared statements"'),
-  description: external_exports3.string().describe('What the convention requires. Example: "All DB queries must go through module functions in server/src/modules/, never inline SQL in index.ts"'),
-  detection_pattern: external_exports3.string().optional().describe('Regex to detect correct usage. Example: "import.*modules/"'),
-  violation_pattern: external_exports3.string().optional().describe('Regex to detect violations. Example: "db\\.prepare\\(.*SELECT.*\\).*index\\.ts"'),
-  examples_good: external_exports3.array(external_exports3.string()).optional().describe('Examples of correct code. Example: ["sessions.createSession({ id })", "decisions.addDecision(input)"]'),
-  examples_bad: external_exports3.array(external_exports3.string()).optional().describe(`Examples of incorrect code. Example: ["db.prepare('SELECT * FROM sessions').all()"]`),
-  scope: external_exports3.enum(["global", "frontend", "backend", "database"]).optional(),
-  source: external_exports3.string().optional().describe('Where this convention comes from. Example: "CLAUDE.md" or "code review 2026-02-22"')
-}, async (input) => {
-  getDb();
-  const conv = addConvention(input);
-  return { content: [{ type: "text", text: JSON.stringify(conv, null, 2) }] };
-});
-server.tool("cortex_check_regression", "Check if content would introduce a known regression or anti-pattern", {
-  file_path: external_exports3.string(),
-  content: external_exports3.string()
-}, async ({ file_path, content }) => {
-  getDb();
-  const warnings = [];
-  const learningMatches = checkContentAgainstLearnings(content);
-  for (const m of learningMatches) {
-    warnings.push({
-      type: "anti-pattern",
-      message: `Anti-pattern: "${m.learning.anti_pattern}" \u2192 Use: "${m.learning.correct_pattern}"`,
-      severity: m.learning.severity
-    });
-  }
-  const conventionMatches = checkContentAgainstConventions(content);
-  for (const m of conventionMatches) {
-    warnings.push({
-      type: "convention-violation",
-      message: `Convention "${m.convention.name}": ${m.convention.description}`,
-      severity: "warning"
-    });
-  }
-  const preventionRules = getPreventionRules();
-  for (const rule of preventionRules) {
-    try {
-      if (new RegExp(rule.prevention_rule, "m").test(content)) {
-        warnings.push({
-          type: "regression",
-          message: `This pattern caused Error #${rule.id}: "${rule.error_message}"`,
-          severity: "error"
-        });
-      }
-    } catch {
-    }
-  }
-  return {
-    content: [{
-      type: "text",
-      text: warnings.length > 0 ? JSON.stringify({ blocked: warnings.some((w) => w.severity === "error"), warnings }, null, 2) : '{"blocked": false, "warnings": []}'
-    }]
-  };
-});
-server.tool("cortex_suggest_claude_md", "Suggest CLAUDE.md updates based on new learnings and patterns", {}, async () => {
-  getDb();
-  const recentLearnings = listLearnings({ limit: 10 });
-  const topConventions = listConventions();
-  const frequentErrors = listErrors({ limit: 5 });
-  const suggestions = [];
-  for (const learning of recentLearnings) {
-    if (learning.occurrences >= 2) {
-      suggestions.push(`New Gotcha: ${learning.anti_pattern} \u2192 ${learning.correct_pattern} (occurred ${learning.occurrences}x)`);
-    }
-  }
-  for (const conv of topConventions) {
-    if (conv.violation_count >= 3 && conv.source !== "claude-md") {
-      suggestions.push(`Convention to add: ${conv.name} \u2014 ${conv.description} (${conv.violation_count} violations)`);
-    }
-  }
-  for (const error48 of frequentErrors) {
-    if (error48.occurrences >= 3 && error48.prevention_rule) {
-      suggestions.push(`Error pattern to document: ${error48.error_message} (${error48.occurrences}x)`);
-    }
-  }
-  return {
-    content: [{
-      type: "text",
-      text: suggestions.length > 0 ? JSON.stringify({ suggestions }, null, 2) : '{"suggestions": [], "message": "No new suggestions \u2014 CLAUDE.md is up to date."}'
-    }]
-  };
-});
-server.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/done", { id: external_exports3.number(), session_id: external_exports3.string().optional() }, async ({ id, session_id }) => {
-  getDb();
-  const item = resolveUnfinished(id, session_id);
-  return {
-    content: [{ type: "text", text: JSON.stringify({ success: !!item, item }, null, 2) }]
-  };
-});
-server.tool("cortex_update_learning", "Update an existing learning/anti-pattern entry (e.g. add detection_regex, change severity, toggle auto_block)", {
-  id: external_exports3.number(),
-  anti_pattern: external_exports3.string().optional(),
-  correct_pattern: external_exports3.string().optional(),
-  detection_regex: external_exports3.string().nullable().optional(),
-  context: external_exports3.string().optional(),
-  severity: external_exports3.enum(["low", "medium", "high"]).optional(),
-  auto_block: external_exports3.boolean().optional()
-}, async (input) => {
-  getDb();
-  const learning = updateLearning(input);
-  return { content: [{ type: "text", text: JSON.stringify(learning, null, 2) }] };
-});
-server.tool("cortex_delete_learning", "Delete a learning/anti-pattern entry by ID", { id: external_exports3.number() }, async ({ id }) => {
-  getDb();
-  const success2 = deleteLearning(id);
-  return { content: [{ type: "text", text: JSON.stringify({ success: success2, deleted_id: id }, null, 2) }] };
-});
-server.tool("cortex_update_error", "Update an existing error record \u2014 add fix description, prevention rule, or change severity", {
-  id: external_exports3.number(),
-  fix_description: external_exports3.string().optional(),
-  root_cause: external_exports3.string().optional(),
-  fix_diff: external_exports3.string().optional(),
-  prevention_rule: external_exports3.string().optional(),
-  severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional()
-}, async (input) => {
-  getDb();
-  const error48 = updateError(input);
-  return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
-});
-server.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional() }, async ({ auto_block_only, limit }) => {
-  getDb();
-  const result = listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-});
-server.tool("cortex_get_stats", "Get overall project statistics: sessions, decisions, errors, files, learnings", {}, async () => {
-  const db2 = getDb();
-  const q = (sql) => db2.prepare(sql).get().c;
-  const stats = {
-    sessions: q("SELECT COUNT(*) as c FROM sessions"),
-    decisions: q("SELECT COUNT(*) as c FROM decisions"),
-    errors: q("SELECT COUNT(*) as c FROM errors"),
-    learnings: q("SELECT COUNT(*) as c FROM learnings"),
-    conventions: q("SELECT COUNT(*) as c FROM conventions"),
-    files_tracked: q("SELECT COUNT(*) as c FROM project_files"),
-    modules: q("SELECT COUNT(*) as c FROM project_modules"),
-    dependencies: q("SELECT COUNT(*) as c FROM dependencies"),
-    unfinished_open: q("SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL")
-  };
-  return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
-});
-server.tool("cortex_import_git_history", "Import git log history to populate Hot Zones with historical file change frequency", {
-  root_path: external_exports3.string().optional(),
-  max_commits: external_exports3.number().optional()
-}, async ({ root_path, max_commits }) => {
-  const { execFileSync } = await import("child_process");
-  const cwd = root_path ?? process.cwd();
-  const limit = max_commits ?? 500;
-  let gitOutput;
-  try {
-    gitOutput = execFileSync("git", ["log", `--max-count=${limit}`, "--name-only", "--pretty=format:"], { cwd, encoding: "utf-8" });
-  } catch (e) {
-    return { content: [{ type: "text", text: JSON.stringify({ error: "git log failed", detail: String(e) }) }] };
-  }
-  const db2 = getDb();
-  const fileCounts = /* @__PURE__ */ new Map();
-  for (const line of gitOutput.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed)
-      continue;
-    if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed))
-      continue;
-    fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
-  }
-  const stmt = db2.prepare(`
-      INSERT INTO project_files (path, change_count, last_changed)
-      VALUES (?, ?, datetime('now'))
-      ON CONFLICT(path) DO UPDATE SET
-        change_count = MAX(project_files.change_count, excluded.change_count)
-    `);
-  let imported = 0;
-  for (const [path3, count] of fileCounts) {
-    stmt.run(path3, count);
-    imported++;
-  }
-  return {
-    content: [{ type: "text", text: JSON.stringify({ success: true, files_imported: imported, commits_analyzed: limit }, null, 2) }]
-  };
-});
-server.tool("cortex_snooze", "Schedule a future session reminder", {
-  description: external_exports3.string(),
-  until: external_exports3.string().describe("Relative 3d/1w or ISO date 2026-03-01"),
-  session_id: external_exports3.string().optional()
-}, async ({ description, until, session_id }) => {
-  let d = /* @__PURE__ */ new Date();
-  if (/^\d+d$/i.test(until))
-    d.setDate(d.getDate() + parseInt(until));
-  else if (/^\d+w$/i.test(until))
-    d.setDate(d.getDate() + parseInt(until) * 7);
-  else
-    d = new Date(until);
-  getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until) VALUES (?,?,?,?,?)`).run(description, "snoozed", "medium", session_id ?? null, d.toISOString());
-  return { content: [{ type: "text", text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
-});
-server.tool("cortex_add_note", "Add scratch pad note", {
-  text: external_exports3.string(),
-  tags: external_exports3.array(external_exports3.string()).optional(),
-  session_id: external_exports3.string().optional()
-}, async ({ text, tags, session_id }) => {
-  const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
-  return { content: [{ type: "text", text: `Note saved (id: ${r.lastInsertRowid})` }] };
-});
-server.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
-  limit: external_exports3.number().optional().default(20),
-  search: external_exports3.string().optional()
-}, async ({ limit, search }) => {
-  const db2 = getDb();
-  const notes = search ? db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit) : db2.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
-  return { content: [{ type: "text", text: notes.map((n) => `[${n.id}] ${n.created_at.slice(0, 10)}: ${n.text}`).join("\n") || "No notes." }] };
-});
-server.tool("cortex_delete_note", "Delete note by id", {
-  id: external_exports3.number()
-}, async ({ id }) => {
-  getDb().prepare(`DELETE FROM notes WHERE id=?`).run(id);
-  return { content: [{ type: "text", text: `Deleted note ${id}` }] };
-});
-server.tool("cortex_blame", "Show full history for a file: diffs, errors, decisions", { file_path: external_exports3.string() }, async ({ file_path }) => {
-  const db2 = getDb();
-  const lines = [`=== History for ${file_path} ===`];
-  try {
-    const fileDiffs = db2.prepare(`SELECT d.created_at, d.change_type, s.summary FROM diffs d LEFT JOIN sessions s ON s.id=d.session_id WHERE d.file_path LIKE ? ORDER BY d.created_at DESC LIMIT 10`).all(`%${file_path}%`);
-    if (fileDiffs.length > 0) {
-      lines.push("DIFFS:");
-      for (const d of fileDiffs)
-        lines.push(`  [${d.created_at?.slice(0, 10)}] ${d.change_type ?? "modified"} \u2014 ${d.summary ?? ""}`);
-    }
-  } catch {
-  }
-  try {
-    const fileErrors = db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE files_involved LIKE ? ORDER BY last_seen DESC LIMIT 5`).all(`%${file_path}%`);
-    if (fileErrors.length > 0) {
-      lines.push("ERRORS:");
-      for (const e of fileErrors)
-        lines.push(`  [${e.severity}] ${e.error_message}${e.fix_description ? " \u2192 " + e.fix_description : ""}`);
-    }
-  } catch {
-  }
-  try {
-    const fileDecisions = db2.prepare(`SELECT title, category, created_at FROM decisions WHERE files_affected LIKE ? ORDER BY created_at DESC LIMIT 5`).all(`%${file_path}%`);
-    if (fileDecisions.length > 0) {
-      lines.push("DECISIONS:");
-      for (const d of fileDecisions)
-        lines.push(`  [${d.category}] ${d.title}`);
-    }
-  } catch {
-  }
-  try {
-    const rawDiffs = db2.prepare("SELECT diff_content FROM diffs WHERE file_path LIKE ? ORDER BY created_at DESC LIMIT 5").all("%" + file_path + "%");
-    const fnChanges = [];
-    for (const d of rawDiffs) {
-      if (!d.diff_content)
-        continue;
-      for (const fileDiff of parseDiff(d.diff_content)) {
-        const s = summarizeFunctionChanges(fileDiff);
-        if (!s.includes("no changes"))
-          fnChanges.push("  " + s);
-      }
-    }
-    if (fnChanges.length > 0) {
-      lines.push("FUNCTION CHANGES:");
-      lines.push(...fnChanges);
-    }
-  } catch {
-  }
-  return { content: [{ type: "text", text: lines.join("\n") || "No history found." }] };
-});
-server.tool("cortex_compare_periods", "Compare activity between two date ranges", {
-  from_a: external_exports3.string().describe("Start of period A (YYYY-MM-DD)"),
-  to_a: external_exports3.string().describe("End of period A (YYYY-MM-DD)"),
-  from_b: external_exports3.string().describe("Start of period B (YYYY-MM-DD)"),
-  to_b: external_exports3.string().describe("End of period B (YYYY-MM-DD)")
-}, async ({ from_a, to_a, from_b, to_b }) => {
-  const db2 = getDb();
-  const count = (sql, ...p) => {
-    try {
-      return db2.prepare(sql).get(...p)?.c ?? 0;
-    } catch {
-      return 0;
-    }
-  };
-  const periodA = {
-    sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_a, to_a),
-    errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_a, to_a),
-    fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_a, to_a),
-    files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_a, to_a)
-  };
-  const periodB = {
-    sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_b, to_b),
-    errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_b, to_b),
-    fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_b, to_b),
-    files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_b, to_b)
-  };
-  return { content: [{ type: "text", text: JSON.stringify({ periodA: { range: `${from_a} to ${to_a}`, ...periodA }, periodB: { range: `${from_b} to ${to_b}`, ...periodB } }, null, 2) }] };
-});
-server.tool("cortex_get_timeline", "Get monthly activity timeline", { limit: external_exports3.number().optional().default(12) }, async ({ limit }) => {
-  const db2 = getDb();
-  try {
-    const rows = db2.prepare(`
-        SELECT strftime('%Y-%m', started_at) as month, COUNT(*) as sessions,
-               GROUP_CONCAT(SUBSTR(summary, 1, 60), ' | ') as summaries
-        FROM sessions WHERE summary IS NOT NULL
-        GROUP BY month ORDER BY month DESC LIMIT ?
-      `).all(limit);
-    const lines = rows.map((r) => `[${r.month}] ${r.sessions} sessions \u2014 ${r.summaries?.slice(0, 200) ?? ""}`);
-    return { content: [{ type: "text", text: lines.join("\n") || "No timeline data." }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e}` }] };
-  }
-});
-server.tool("cortex_forget", "Archive (soft-delete) decisions, errors, and learnings matching a topic", { topic: external_exports3.string().describe("Keyword or phrase to match against") }, async ({ topic }) => {
-  const db2 = getDb();
-  const pat = `%${topic}%`;
-  let archived = 0;
-  try {
-    const r = db2.prepare(`UPDATE decisions SET archived=1 WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1`).run(pat, pat);
-    archived += Number(r.changes);
-  } catch {
-  }
-  try {
-    const r = db2.prepare(`UPDATE errors SET archived=1 WHERE (error_message LIKE ? OR root_cause LIKE ?) AND archived!=1`).run(pat, pat);
-    archived += Number(r.changes);
-  } catch {
-  }
-  try {
-    const r = db2.prepare(`UPDATE learnings SET archived=1 WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1`).run(pat, pat);
-    archived += Number(r.changes);
-  } catch {
-  }
-  return { content: [{ type: "text", text: `Archived ${archived} item(s) matching "${topic}".` }] };
-});
-server.tool("cortex_dejavu", "Check if a task looks similar to past sessions (deja-vu detection)", { task_description: external_exports3.string() }, async ({ task_description }) => {
-  const db2 = getDb();
-  const keywords = task_description.split(/\s+/).filter((w) => w.length > 4).slice(0, 8);
-  if (keywords.length === 0)
-    return { content: [{ type: "text", text: "No keywords to match." }] };
-  const lines = [];
-  for (const kw of keywords) {
-    try {
-      const matches = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? AND status='completed' ORDER BY started_at DESC LIMIT 2`).all(`%${kw}%`);
-      for (const m of matches)
-        lines.push(`[${m.started_at?.slice(0, 10)}] ${m.summary}`);
-    } catch {
-    }
-  }
-  const unique = [...new Set(lines)].slice(0, 10);
-  return { content: [{ type: "text", text: unique.length > 0 ? `Deja-vu matches:
-${unique.join("\n")}` : "No similar sessions found." }] };
-});
-server.tool("cortex_check_blind_spots", "Find project files not touched in recent sessions \u2014 potential blind spots", { days: external_exports3.number().optional().default(14), limit: external_exports3.number().optional().default(10) }, async ({ days, limit }) => {
-  const db2 = getDb();
-  try {
-    const untouched = db2.prepare(`
-        SELECT path, change_count, last_changed FROM project_files
-        WHERE (last_changed IS NULL OR last_changed < datetime('now', ? || ' days'))
-          AND change_count > 0
-        ORDER BY change_count DESC LIMIT ?
-      `).all(`-${days}`, limit);
-    if (untouched.length === 0) {
-      return { content: [{ type: "text", text: "No blind spots detected \u2014 all active files touched recently." }] };
-    }
-    const lines = [`Blind spots (not touched in ${days}d):`];
-    for (const f of untouched) {
-      lines.push(`  ${f.path} (${f.change_count} total changes, last: ${f.last_changed?.slice(0, 10) ?? "never"})`);
-    }
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e}` }] };
-  }
-});
-server.tool("cortex_add_intent", "Store a stated intention for follow-up in future sessions", {
-  intent: external_exports3.string().describe("What you plan to do next"),
-  session_id: external_exports3.string().optional()
-}, async ({ intent, session_id }) => {
-  const db2 = getDb();
-  const ts = (/* @__PURE__ */ new Date()).toISOString();
-  db2.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(session_id ?? `intent-${ts}`, ts);
-  db2.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(session_id ?? null, ts, `[INTENT] ${intent}`);
-  return { content: [{ type: "text", text: `Intent stored: "${intent}"` }] };
-});
-server.tool("cortex_snapshot", "Get a concise brain snapshot \u2014 top state, intents, mood, drift, anchors", {}, async () => {
-  const db2 = getDb();
-  const md = [`# Brain Snapshot \u2014 ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 16).replace("T", " ")}`, ""];
-  try {
-    const moodSessions = db2.prepare(`SELECT mood_score FROM sessions WHERE mood_score IS NOT NULL ORDER BY started_at DESC LIMIT 7`).all();
-    if (moodSessions.length > 0) {
-      const avg = moodSessions.reduce((s, r) => s + r.mood_score, 0) / moodSessions.length;
-      md.push(`**Mood:** ${avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative"} (${avg.toFixed(1)}/5)`);
-    }
-  } catch {
-  }
-  try {
-    const open = db2.prepare(`SELECT description, priority FROM unfinished WHERE resolved_at IS NULL ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END LIMIT 5`).all();
-    if (open.length > 0) {
-      md.push("");
-      md.push(`## Open Items (${open.length})`);
-      for (const u of open)
-        md.push(`- [${u.priority}] ${u.description}`);
-    }
-  } catch {
-  }
-  try {
-    const intents = db2.prepare(`SELECT description FROM unfinished WHERE context='intent' AND resolved_at IS NULL LIMIT 3`).all();
-    if (intents.length > 0) {
-      md.push("");
-      md.push("## Intents");
-      for (const i of intents)
-        md.push(`- ${i.description.replace("[INTENT] ", "")}`);
-    }
-  } catch {
-  }
-  try {
-    const anchors = db2.prepare(`SELECT topic, priority FROM attention_anchors ORDER BY priority DESC LIMIT 5`).all();
-    if (anchors.length > 0) {
-      md.push("");
-      md.push("## Attention Anchors");
-      for (const a of anchors)
-        md.push(`- ${a.topic} (p${a.priority})`);
-    }
-  } catch {
-  }
-  try {
-    const drift = db2.prepare(`SELECT description FROM unfinished WHERE description LIKE '[DRIFT]%' AND resolved_at IS NULL LIMIT 3`).all();
-    if (drift.length > 0) {
-      md.push("");
-      md.push("## Drift Warnings");
-      for (const d of drift)
-        md.push(`- ${d.description}`);
-    }
-  } catch {
-  }
-  try {
-    const stale = db2.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get();
-    if (stale?.c > 0) {
-      md.push("");
-      md.push(`## Stale Decisions: ${stale.c} (>90 days old \u2014 review needed)`);
-    }
-  } catch {
-  }
-  try {
-    const recent = db2.prepare(`
-        SELECT id, started_at, summary, key_changes FROM sessions
-        WHERE status='completed' AND summary IS NOT NULL
-        ORDER BY started_at DESC LIMIT 10
-      `).all();
-    if (recent.length > 0) {
-      md.push("");
-      md.push("## Recent Sessions");
-      for (let i = 0; i < recent.length; i++) {
-        const s = recent[i];
-        const date5 = s.started_at?.slice(0, 10) ?? "?";
-        if (i < 3) {
-          md.push(`- [${date5}] ${s.summary}`);
-          if (s.key_changes) {
-            try {
-              const changes = JSON.parse(s.key_changes);
-              for (const c of changes.slice(0, 3)) {
-                md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
-              }
-            } catch {
-            }
-          }
-        } else {
-          const summary = s.summary ?? "";
-          md.push(`- [${date5}] ${summary.slice(0, 80)}${summary.length > 80 ? "..." : ""}`);
-        }
-      }
-    }
-  } catch {
-  }
-  try {
-    const recentDecisions = db2.prepare(`
-        SELECT id, title, category, reasoning FROM decisions
-        WHERE archived_at IS NULL AND superseded_by IS NULL
-          AND created_at > datetime('now', '-7 days')
-        ORDER BY created_at DESC LIMIT 5
-      `).all();
-    const olderDecisionsCount = db2.prepare(`
-        SELECT COUNT(*) as c FROM decisions
-        WHERE archived_at IS NULL AND superseded_by IS NULL
-          AND created_at <= datetime('now', '-7 days')
-      `).get()?.c ?? 0;
-    if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
-      md.push("");
-      md.push("## Decisions");
-      for (const d of recentDecisions) {
-        const r = d.reasoning ?? "";
-        md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? "..." : ""}`);
-      }
-      if (olderDecisionsCount > 0) {
-        md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
-      }
-    }
-  } catch {
-  }
-  try {
-    const autoBlocks = db2.prepare(`
-        SELECT anti_pattern, correct_pattern FROM learnings
-        WHERE auto_block = 1 AND archived_at IS NULL
-      `).all();
-    const recentLearnings = db2.prepare(`
-        SELECT anti_pattern, correct_pattern, severity FROM learnings
-        WHERE auto_block = 0 AND archived_at IS NULL
-          AND created_at > datetime('now', '-7 days')
-        ORDER BY created_at DESC LIMIT 5
-      `).all();
-    const olderLearningsCount = db2.prepare(`
-        SELECT COUNT(*) as c FROM learnings
-        WHERE auto_block = 0 AND archived_at IS NULL
-          AND created_at <= datetime('now', '-7 days')
-      `).get()?.c ?? 0;
-    if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
-      md.push("");
-      md.push("## Learnings");
-      if (autoBlocks.length > 0) {
-        md.push("**Auto-Block Rules:**");
-        for (const l of autoBlocks) {
-          md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
-        }
-      }
-      for (const l of recentLearnings) {
-        md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
-      }
-      if (olderLearningsCount > 0) {
-        md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
-      }
-    }
-  } catch {
-  }
-  return { content: [{ type: "text", text: md.join("\n") }] };
-});
-server.tool("cortex_update_profile", "Update user profile (name, role, working style, expertise, communication preference)", {
-  name: external_exports3.string().optional(),
-  role: external_exports3.string().optional(),
-  working_style: external_exports3.string().optional(),
-  expertise_areas: external_exports3.string().optional(),
-  communication_preference: external_exports3.string().optional()
-}, async (input) => {
-  const db2 = getDb();
-  db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, communication_preference, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET
-        name=COALESCE(excluded.name, name),
-        role=COALESCE(excluded.role, role),
-        working_style=COALESCE(excluded.working_style, working_style),
-        expertise_areas=COALESCE(excluded.expertise_areas, expertise_areas),
-        communication_preference=COALESCE(excluded.communication_preference, communication_preference),
-        updated_at=datetime('now')`).run(input.name ?? null, input.role ?? null, input.working_style ?? null, input.expertise_areas ?? null, input.communication_preference ?? null);
-  return { content: [{ type: "text", text: "Profile updated." }] };
-});
-server.tool("cortex_get_profile", "Get the user profile", {}, async () => {
-  const db2 = getDb();
-  try {
-    const profile = db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get();
-    if (!profile)
-      return { content: [{ type: "text", text: "No profile set. Use cortex_update_profile to create one." }] };
-    const lines = [
-      `Name: ${profile.name ?? "(not set)"}`,
-      `Role: ${profile.role ?? "(not set)"}`,
-      `Working Style: ${profile.working_style ?? "(not set)"}`,
-      `Expertise: ${profile.expertise_areas ?? "(not set)"}`,
-      `Communication: ${profile.communication_preference ?? "(not set)"}`,
-      `Updated: ${profile.updated_at?.slice(0, 10) ?? "never"}`
-    ];
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e}` }] };
-  }
-});
-server.tool("cortex_export", "Export brain data as JSON or Markdown", { format: external_exports3.enum(["json", "markdown"]).optional().default("markdown") }, async ({ format }) => {
-  const db2 = getDb();
-  try {
-    const data = {
-      exported_at: (/* @__PURE__ */ new Date()).toISOString(),
-      profile: db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get() ?? {},
-      sessions: db2.prepare(`SELECT id, started_at, summary, tags, emotional_tone, mood_score FROM sessions WHERE status='completed' ORDER BY started_at DESC LIMIT 50`).all(),
-      decisions: db2.prepare(`SELECT title, category, reasoning, created_at FROM decisions WHERE archived!=1 ORDER BY created_at DESC LIMIT 30`).all(),
-      learnings: db2.prepare(`SELECT anti_pattern, correct_pattern, severity, occurrences FROM learnings WHERE archived!=1 ORDER BY occurrences DESC LIMIT 50`).all(),
-      errors: db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE archived!=1 ORDER BY occurrences DESC LIMIT 30`).all(),
-      unfinished: db2.prepare(`SELECT description, priority, created_at FROM unfinished WHERE resolved_at IS NULL ORDER BY created_at DESC`).all(),
-      notes: (() => {
-        try {
-          return db2.prepare(`SELECT text, tags, created_at FROM notes ORDER BY created_at DESC LIMIT 30`).all();
-        } catch {
-          return [];
-        }
-      })()
-    };
-    if (format === "json") {
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-    const md = [`# Brain Export \u2014 ${data.exported_at.slice(0, 10)}`, ""];
-    md.push(`## Profile`);
-    const p = data.profile;
-    if (p?.name)
-      md.push(`**${p.name}** \xB7 ${p.role ?? ""} \xB7 ${p.working_style ?? ""}`);
-    md.push("");
-    md.push(`## Open Items (${data.unfinished.length})`);
-    for (const u of data.unfinished)
-      md.push(`- [${u.priority}] ${u.description}`);
-    md.push("");
-    md.push(`## Key Learnings (${data.learnings.length})`);
-    for (const l of data.learnings)
-      md.push(`- **${l.anti_pattern}** \u2192 ${l.correct_pattern} (${l.occurrences}x)`);
-    md.push("");
-    md.push(`## Recent Sessions (${data.sessions.length})`);
-    for (const s of data.sessions)
-      md.push(`- [${s.started_at?.slice(0, 10)}] ${s.summary ?? ""}`);
-    return { content: [{ type: "text", text: md.join("\n") }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Export error: ${e}` }] };
-  }
-});
-server.tool("cortex_add_anchor", "Add an attention anchor \u2014 a topic that always gets priority context", { topic: external_exports3.string(), priority: external_exports3.number().optional().default(5) }, async ({ topic, priority }) => {
-  const db2 = getDb();
-  try {
-    db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
-    return { content: [{ type: "text", text: `Anchor added: "${topic}" (priority ${priority})` }] };
-  } catch {
-    return { content: [{ type: "text", text: `Anchor "${topic}" already exists or could not be added.` }] };
-  }
-});
-server.tool("cortex_remove_anchor", "Remove an attention anchor by topic", { topic: external_exports3.string() }, async ({ topic }) => {
-  const db2 = getDb();
-  const r = db2.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
-  return { content: [{ type: "text", text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
-});
-server.tool("cortex_list_anchors", "List all attention anchors", {}, async () => {
-  const db2 = getDb();
-  try {
-    const anchors = db2.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all();
-    if (anchors.length === 0)
-      return { content: [{ type: "text", text: "No attention anchors set." }] };
-    const lines = anchors.map((a) => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0, 10) ?? "never"})`);
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e}` }] };
-  }
-});
-server.tool("cortex_get_mood", "Get current system mood based on rolling average of last 7 sessions", {}, async () => {
-  const db2 = getDb();
-  try {
-    const sessions = db2.prepare(`
-        SELECT emotional_tone, mood_score, started_at FROM sessions
-        WHERE mood_score IS NOT NULL AND status='completed'
-        ORDER BY started_at DESC LIMIT 7
-      `).all();
-    if (sessions.length === 0) {
-      return { content: [{ type: "text", text: "No mood data yet. Mood scoring runs after sessions complete." }] };
-    }
-    const avg = sessions.reduce((s, r) => s + (r.mood_score ?? 3), 0) / sessions.length;
-    const mood = avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative";
-    const lines = [
-      `System Mood: ${mood} (avg ${avg.toFixed(1)}/5 over last ${sessions.length} sessions)`,
-      "",
-      "Recent sessions:",
-      ...sessions.map((s) => `  [${s.started_at?.slice(0, 10)}] ${s.emotional_tone ?? "unknown"} (${s.mood_score}/5)`)
-    ];
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e}` }] };
-  }
-});
-server.tool("cortex_onboard", "Run first-time onboarding: set up user profile and attention anchors", {
-  name: external_exports3.string().describe("Your name"),
-  role: external_exports3.string().describe("Your role (e.g. solo developer, lead engineer)"),
-  working_style: external_exports3.string().describe("How you prefer to work (e.g. test-driven, prototype-first)"),
-  expertise_areas: external_exports3.string().describe("Your main areas of expertise (comma-separated)"),
-  anchors: external_exports3.array(external_exports3.string()).describe("3-5 topics you always want Cortex to track").optional()
-}, async ({ name, role, working_style, expertise_areas, anchors }) => {
-  const db2 = getDb();
-  const ts = (/* @__PURE__ */ new Date()).toISOString();
-  db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, updated_at)
-      VALUES (1, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,
-        working_style=excluded.working_style, expertise_areas=excluded.expertise_areas,
-        updated_at=datetime('now')`).run(name, role, working_style, expertise_areas);
-  const addedAnchors = [];
-  if (anchors && anchors.length > 0) {
-    for (const topic of anchors.slice(0, 5)) {
-      try {
-        db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, 8)`).run(topic);
-        addedAnchors.push(topic);
-      } catch {
-      }
-    }
-  }
-  db2.prepare(`INSERT INTO meta (key, value) VALUES ('onboarding_complete', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ts);
-  const lines = [
-    `Welcome, ${name}! Cortex is now configured.`,
-    `Role: ${role}`,
-    `Working style: ${working_style}`,
-    `Expertise: ${expertise_areas}`,
-    addedAnchors.length > 0 ? `Anchors: ${addedAnchors.join(", ")}` : "",
-    "",
-    "Cortex will now track your sessions, decisions, errors, and learnings.",
-    "Use /resume to get a re-entry brief at any time."
-  ].filter((l) => l !== "");
-  return { content: [{ type: "text", text: lines.join("\n") }] };
-});
-server.tool("cortex_set_project", "Set the active project name for context tagging", { project: external_exports3.string() }, async ({ project }) => {
-  const db2 = getDb();
-  db2.prepare(`INSERT INTO meta (key, value) VALUES ('active_project', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(project);
-  return { content: [{ type: "text", text: `Active project set to: "${project}"` }] };
-});
-server.tool("cortex_cross_project_search", "Search across all projects in this Cortex DB", { query: external_exports3.string(), limit: external_exports3.number().optional().default(10) }, async ({ query, limit }) => {
-  const db2 = getDb();
-  const pat = `%${query}%`;
-  const lines = [];
-  try {
-    const sessions = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?`).all(pat, limit);
-    for (const s of sessions)
-      lines.push(`[SESSION] ${s.started_at?.slice(0, 10)}: ${s.summary}`);
-  } catch {
-  }
-  try {
-    const decisions = db2.prepare(`SELECT title, category FROM decisions WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
-    for (const d of decisions)
-      lines.push(`[DECISION/${d.category}] ${d.title}`);
-  } catch {
-  }
-  try {
-    const learnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
-    for (const l of learnings)
-      lines.push(`[LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
-  } catch {
-  }
-  try {
-    const notes = db2.prepare(`SELECT text, project, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(pat, limit);
-    for (const n of notes)
-      lines.push(`[NOTE${n.project ? "/" + n.project : ""}] ${n.text.slice(0, 100)}`);
-  } catch {
-  }
-  return { content: [{ type: "text", text: lines.join("\n") || "No cross-project results found." }] };
-});
-server.tool("cortex_load_tools", "Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.", {
-  categories: external_exports3.array(external_exports3.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(", ")}`)).describe('List of categories to load guidance for. Example: ["memory", "decisions"]')
-}, async ({ categories }) => {
-  getDb();
-  try {
-    const guidance = getToolGuidance(categories);
-    return { content: [{ type: "text", text: guidance }] };
-  } catch (err) {
-    return { content: [{ type: "text", text: err.message }] };
-  }
-});
+registerSessionTools(server);
+registerDecisionTools(server);
+registerErrorTools(server);
+registerLearningTools(server);
+registerProjectMapTools(server);
+registerTrackingTools(server);
+registerIntelligenceTools(server);
+registerStatsTools(server);
+registerProfileTools(server);
+registerMetaTools(server);
 async function main() {
   getDb();
   const transport = new StdioServerTransport();
