@@ -58,11 +58,14 @@ async function main() {
     if (fileList.length > 0) parts.push(`Files: ${fileList.slice(0, 10).join(', ')}${fileList.length > 10 ? ` (+${fileList.length - 10})` : ''}`);
     const actions = Object.entries(toolCounts).sort(([, a], [, b]) => b - a).map(([t, c]) => `${t}:${c}`).join(', ');
     if (actions) parts.push(`Actions: ${actions}`);
+    if (userMessages.length > 0) parts.push(`Topics: ${userMessages.slice(0, 3).map(m => m.slice(0, 60)).join('; ')}`);
     let summary = parts.join(' | ') || 'No significant activity';
     let sessionTags = [];
 
-    // Haiku-Agent für semantische Summary (nur wenn echte Arbeit geleistet)
-    if (fileList.length > 0 || toolCalls.length > 3) {
+    // Haiku-Agent für semantische Summary
+    // Trigger: Dateien geändert, >2 Tool-Calls, MCP-Calls, oder >1 User-Messages
+    const hasMcpCalls = toolCalls.some(t => t.startsWith('mcp__'));
+    if (fileList.length > 0 || toolCalls.length > 2 || hasMcpCalls || userMessages.length > 1) {
       const aiResult = await buildTranscriptSummary(transcript_path, fileList, toolCounts);
       if (aiResult?.summary) {
         summary = aiResult.summary;

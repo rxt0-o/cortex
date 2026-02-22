@@ -92,7 +92,7 @@ function main() {
           VALUES (?, ?, ?, 'modified', ?, 0, ?)`).run(session_id, filePath, `[Write: ${lines} lines]`, lines, ts);
       }
 
-      // 5. Scan imports
+      // 5. Scan imports + exports (only on Write — full content available)
       const content = tool_input.content || '';
       if (content) {
         const ext = filePath.split('.').pop()?.toLowerCase();
@@ -100,6 +100,12 @@ function main() {
           db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(filePath);
           const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
           for (const imp of scanImports(content, ext)) stmt.run(filePath, imp, 'static');
+
+          // Extract and cache top-level exports/symbols
+          const symbols = extractExports(content, ext);
+          if (symbols.length > 0) {
+            db.prepare('UPDATE project_files SET exports = ? WHERE path = ?').run(JSON.stringify(symbols), filePath);
+          }
         }
       }
     }
@@ -184,6 +190,32 @@ function inferFileType(fp) {
   if (p.includes('/pages/')) return 'page';
   if (p.includes('/config/')) return 'config';
   return null;
+}
+
+function extractExports(content, ext) {
+  const symbols = [];
+  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
+    const patterns = [
+      /export\s+(?:async\s+)?function\s+(\w+)/g,
+      /export\s+(?:default\s+)?class\s+(\w+)/g,
+      /export\s+const\s+(\w+)/g,
+      /export\s+(?:type|interface|enum)\s+(\w+)/g,
+    ];
+    for (const re of patterns) {
+      let m; while ((m = re.exec(content))) symbols.push(m[1]);
+    }
+  } else if (ext === 'py') {
+    const patterns = [
+      /^(?:async\s+)?def\s+(\w+)/gm,
+      /^class\s+(\w+)/gm,
+    ];
+    for (const re of patterns) {
+      let m; while ((m = re.exec(content))) {
+        if (!m[1].startsWith('_')) symbols.push(m[1]);
+      }
+    }
+  }
+  return [...new Set(symbols)];
 }
 
 function scanImports(content, ext) {

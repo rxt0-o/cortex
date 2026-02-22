@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { runClaudeAgent } from '../runner.js';
+import { runClaudeAgent, buildAgentContext, formatAgentContext } from '../runner.js';
 function jaccardSimilarity(a, b) {
     if (a.size === 0 && b.size === 0)
         return 0;
@@ -127,16 +127,18 @@ async function predictIntent(db, projectPath, recentSessions) {
   `).all();
     const decisions = db.prepare(`
     SELECT id, title, reasoning FROM decisions
-    WHERE archived != 1
+    WHERE archived_at IS NULL
     ORDER BY created_at DESC
     LIMIT 5
   `).all();
     const errors = db.prepare(`
     SELECT id, error_message, fix_description FROM errors
-    WHERE archived != 1
+    WHERE archived_at IS NULL
     ORDER BY last_seen DESC
     LIMIT 3
   `).all();
+    const agentCtx = buildAgentContext(projectPath, 'pattern');
+    const contextBlock = formatAgentContext(agentCtx);
     const lastSession = recentSessions[0];
     const daysSinceLastSession = lastSession
         ? (Date.now() - new Date(lastSession.started_at).getTime()) / 86400000
@@ -184,6 +186,7 @@ ${decisions.map(d => `[#${d.id}] ${d.title}`).join('\n') || '(keine)'}
 <recent_errors>
 ${errors.map(e => `[#${e.id}] ${e.error_message}${e.fix_description ? ' (fixed: ' + e.fix_description + ')' : ''}`).join('\n') || '(keine)'}
 </recent_errors>
+${contextBlock}
 </signals>
 
 <instructions>

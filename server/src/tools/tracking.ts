@@ -78,7 +78,7 @@ export function registerTrackingTools(server: McpServer): void {
     if (/^\d+d$/i.test(until)) d.setDate(d.getDate() + parseInt(until));
     else if (/^\d+w$/i.test(until)) d.setDate(d.getDate() + parseInt(until) * 7);
     else d = new Date(until);
-    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until) VALUES (?,?,?,?,?)`).run(description, 'snoozed', 'medium', session_id ?? null, d.toISOString());
+    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until,created_at) VALUES (?,?,?,?,?,datetime('now'))`).run(description, 'snoozed', 'medium', session_id ?? null, d.toISOString());
     return { content: [{ type: 'text' as const, text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
   });
 }

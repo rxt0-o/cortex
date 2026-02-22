@@ -158,17 +158,20 @@ async function predictIntent(
 
   const decisions = db.prepare(`
     SELECT id, title, reasoning FROM decisions
-    WHERE archived != 1
+    WHERE archived_at IS NULL
     ORDER BY created_at DESC
     LIMIT 5
   `).all() as Array<{ id: number; title: string; reasoning: string }>;
 
   const errors = db.prepare(`
     SELECT id, error_message, fix_description FROM errors
-    WHERE archived != 1
+    WHERE archived_at IS NULL
     ORDER BY last_seen DESC
     LIMIT 3
   `).all() as Array<{ id: number; error_message: string; fix_description: string | null }>;
+
+  const agentCtx = buildAgentContext(projectPath, 'pattern');
+  const contextBlock = formatAgentContext(agentCtx);
 
   const lastSession = recentSessions[0];
   const daysSinceLastSession = lastSession
@@ -219,6 +222,7 @@ ${decisions.map(d => `[#${d.id}] ${d.title}`).join('\n') || '(keine)'}
 <recent_errors>
 ${errors.map(e => `[#${e.id}] ${e.error_message}${e.fix_description ? ' (fixed: ' + e.fix_description + ')' : ''}`).join('\n') || '(keine)'}
 </recent_errors>
+${contextBlock}
 </signals>
 
 <instructions>
