@@ -12,11 +12,15 @@ Cortex gives Claude Code a long-term brain. It tracks every session, remembers e
 | **Context Injection** | Session start: relevant context from past sessions, unfinished items, known errors in changed files. |
 | **Autonomous Daemon** | Background process spawns `claude -p` agents to analyze architecture, explain files, and self-improve. |
 | **Error Memory** | Remembers every error + fix. Same error again? Instant answer instead of re-debugging. |
-| **Regression Guard** | PreToolUse hook blocks changes that would reintroduce known bugs. |
+| **Regression Guard** | PreToolUse hook blocks changes that would reintroduce known bugs or violate pinned rules. |
 | **Dependency Graph** | Import-based graph: "If you change X, Y and Z are affected." |
 | **Hot Zones** | Which files get changed most? Where do bugs originate? Identifies refactoring candidates. |
 | **Health Score** | Daily snapshot: error frequency, open TODOs, convention compliance. Trend over time. |
 | **Unfinished Business** | Tracks abandoned tasks, reminds you on next session start. |
+| **Pin Rules** | `/pin` writes a rule to DB + hookify-compatible `.claude/cortex-pins.local.md`. PreToolUse blocks violations instantly. |
+| **Skill Self-Improvement** | SkillAdvisor agent autonomously improves `skills/*/SKILL.md` files after each session. |
+| **Agent Monitoring** | Every agent run is logged to DB. `cortex_agent_status` + `cortex_session_metrics` for observability. |
+| **Daemon Resilience** | External watcher process auto-restarts daemon on crash via heartbeat file. |
 
 ## Requirements
 
@@ -90,7 +94,7 @@ Six plain Node.js scripts run as Claude Code hooks. Zero npm dependencies — th
 
 ### Daemon (Autonomous Layer)
 
-The daemon is a persistent Node.js process that starts automatically on session start (via PID file check) and runs in the background. It polls an event queue (`.claude/cortex-events.jsonl`) every 500ms and dispatches work to three autonomous agents.
+The daemon is a persistent Node.js process that starts automatically on session start (via PID file check) and runs in the background. It polls an event queue (`.claude/cortex-events.jsonl`) every 500ms and dispatches work to autonomous agents. A separate watcher process monitors the daemon via heartbeat file and auto-restarts it on crash.
 
 ```
 SessionStart hook
@@ -99,9 +103,14 @@ SessionStart hook
                └─ every 500ms poll:
                     file_access event → Context Agent
                     session_end event → Learner Agent
+                                     → Drift Detector Agent
+                                     → Synthesizer Agent
+                                     → Serendipity Agent
+                                     → MoodScorer Agent
+                                     → SkillAdvisor Agent
 ```
 
-Each agent runs as a separate `claude -p` subprocess (same Claude Code subscription, no extra API costs).
+Each agent runs as a separate `claude -p` subprocess (same Claude Code subscription, no extra API costs). All agents receive a structured context block (recent diffs, hot zones, session delta) via `buildAgentContext()` before their main prompt.
 
 #### Architect Agent
 
@@ -123,15 +132,31 @@ Triggers on `session_end`. Reads files changed in the last 2 hours and the last 
 - **important** — saved with full context
 - **critical** — saved with `auto_block: true` (blocks future regressions)
 
-Extracts three types of knowledge:
-- **facts** — concrete observations (file roles, patterns used)
-- **insights** — broader learnings (anti-patterns, errors, architecture updates)
+Extracts: **learnings** (anti-patterns), **errors**, **facts** (stable project truths), **insights** (broader observations), and **architecture updates**. Every write includes a mandatory `write_gate_reason`. Superseded entries are linked via `superseded_by`.
 
-Every write includes a mandatory `write_gate_reason` explaining why the entry was deemed worth storing. Superseded entries are linked via `superseded_by`.
+#### Drift Detector Agent
+
+Triggers on `session_end` (max once per 22 hours). Compares recently modified files against stored architectural decisions and flags potential drift as `[DRIFT]` unfinished items.
+
+#### Synthesizer Agent
+
+Triggers every 10 sessions. Reads accumulated learnings, errors and facts, identifies duplicates and contradictions, and synthesizes a consolidated memory — removing noise and promoting what matters.
+
+#### Serendipity Agent
+
+Triggers on `session_end`. Randomly surfaces old learnings or decisions that may be relevant to current work — creating unexpected connections across sessions.
+
+#### MoodScorer Agent
+
+Triggers on `session_end`. Classifies the session's emotional tone (productive, stuck, exploratory, etc.) and writes a rolling mood score used by `cortex_get_mood`.
+
+#### SkillAdvisor Agent
+
+Triggers on `session_end`. Analyzes the transcript and recent diffs, identifies skills that were incomplete or patterns recurring enough to warrant a new skill, and directly edits `skills/*/SKILL.md` files. Changes land uncommitted — visible via `git diff skills/`.
 
 ### MCP Server
 
-A TypeScript MCP server exposes 55 tools for querying and updating the Cortex database. Used by Claude during active sessions.
+A TypeScript MCP server exposes 57 tools for querying and updating the Cortex database. Used by Claude during active sessions.
 
 ### Event Queue
 
@@ -160,12 +185,18 @@ cortex/
 ├── daemon/                     # Autonomous background process (TypeScript)
 │   ├── src/
 │   │   ├── index.ts            # Entry point: PID mgmt, queue polling
-│   │   ├── runner.ts           # claude -p subprocess runner (serial queue)
+│   │   ├── runner.ts           # claude -p runner + buildAgentContext()
 │   │   ├── queue.ts            # JSONL event queue reader/writer
+│   │   ├── watcher.ts          # External heartbeat watcher (auto-restart)
 │   │   └── agents/
 │   │       ├── architect.ts    # Full-stack architecture mapper
 │   │       ├── context.ts      # File-access explainer (debounced)
-│   │       └── learner.ts      # Session transcript analyzer
+│   │       ├── learner.ts      # Session transcript analyzer (Sonnet)
+│   │       ├── drift-detector.ts # Architecture drift detection
+│   │       ├── synthesizerAgent.ts # Memory consolidation (every 10 sessions)
+│   │       ├── serendipityAgent.ts # Surfaces old learnings randomly
+│   │       ├── moodScorer.ts   # Session mood classification
+│   │       └── skillAdvisor.ts # Autonomous skill improvement (Haiku)
 │   └── dist/                   # Pre-built, ready to run
 │
 ├── server/                     # MCP Server (TypeScript)
@@ -177,15 +208,17 @@ cortex/
 │                               # project-map, unfinished
 │
 ├── skills/                     # Slash commands for Claude Code
-│   ├── cortex-search/
-│   ├── cortex-map/
-│   ├── cortex-deps/
-│   ├── cortex-history/
-│   ├── cortex-decisions/
-│   ├── cortex-errors/
-│   ├── cortex-health/
-│   ├── cortex-unfinished/
-│   └── cortex-conventions/
+│   ├── resume/                 # Re-entry brief
+│   ├── cortex-search/          # FTS5 search
+│   ├── cortex-health/          # Master dashboard
+│   ├── cortex-file/            # File history + impact
+│   ├── cortex-review/          # Code review
+│   ├── cortex-decisions/       # Decision log
+│   ├── cortex-errors/          # Error list
+│   ├── pin/                    # Pin rules (DB + hookify)
+│   ├── note/                   # Scratch-pad notes
+│   ├── snooze/                 # Session reminders
+│   └── timeline/               # Activity overview
 │
 └── hooks/
     └── hooks.json              # Hook configuration template
@@ -195,7 +228,7 @@ cortex/
 
 ## MCP Tools
 
-55 tools available when the MCP server is running:
+57 tools available when the MCP server is running:
 
 **Memory & Context**
 | Tool | Description |
@@ -284,21 +317,25 @@ cortex/
 | `cortex_export` | Export all brain data as JSON or Markdown |
 | `cortex_set_project` | Set active project name for context tagging |
 
-## Slash Commands
+**Monitoring**
+| Tool | Description |
+|---|---|
+| `cortex_session_metrics` | OTEL-based metrics for the last N sessions |
+| `cortex_agent_status` | Health and run history for all daemon agents |
 
-Install the `skills/` directory as a Claude Code plugin or copy individual skill files.
+## Slash Commands
 
 | Command | Description |
 |---|---|
-| `/cortex-search <query>` | Search everything |
-| `/cortex-map [module]` | Project architecture |
-| `/cortex-deps <file>` | Impact analysis |
-| `/cortex-history <file>` | File timeline |
-| `/cortex-decisions` | Decision log |
-| `/cortex-errors` | Known errors |
-| `/cortex-health` | Health score |
-| `/cortex-unfinished` | Open items |
-| `/cortex-conventions` | Convention overview |
+| `/resume` | Re-entry brief: last session, open items, changed files |
+| `/cortex-search <query>` | FTS5/BM25 search across all Cortex data |
+| `/cortex-health` | Master dashboard: health, decisions, errors, conventions |
+| `/cortex-file <file>` | File history, dependencies, impact analysis |
+| `/cortex-review` | Intelligent code review with auto model selection |
+| `/pin <rule>` | Pin a rule as auto-blocking learning + hookify file |
+| `/note <text>` | Quick scratch-pad note |
+| `/snooze <text> <time>` | Set a reminder for a future session |
+| `/timeline` | Monthly activity overview |
 
 ---
 
@@ -306,7 +343,7 @@ Install the `skills/` directory as a Claude Code plugin or copy individual skill
 
 SQLite at `.claude/cortex.db` — one file per project, created automatically on first hook run.
 
-15 tables: `sessions`, `decisions`, `errors`, `learnings`, `facts`, `insights`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `notes`, `schema_version`.
+17 tables: `sessions`, `decisions`, `errors`, `learnings`, `facts`, `insights`, `project_modules`, `project_files`, `dependencies`, `diffs`, `conventions`, `unfinished`, `health_snapshots`, `notes`, `schema_version`, `session_metrics`, `agent_runs`.
 
 Uses `node:sqlite` (Node.js built-in, available since Node 22). Zero native dependencies, no compilation.
 
