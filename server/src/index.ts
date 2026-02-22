@@ -324,8 +324,13 @@ server.tool(
   },
   async (input) => {
     getDb();
-    const learning = learnings.addLearning(input);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(learning, null, 2) }] };
+    const { learning, duplicate } = learnings.addLearning(input);
+    let text = 'Learning saved (id: ' + learning.id + ')';
+    if (duplicate) {
+      text += '\nWarning: Possible duplicate of Learning #' + duplicate.id +
+        ' (' + duplicate.score + '% similar): "' + duplicate.anti_pattern + '"';
+    }
+    return { content: [{ type: 'text' as const, text }] };
   }
 );
 
