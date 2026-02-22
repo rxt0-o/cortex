@@ -63,10 +63,15 @@ export function registerLearningTools(server: McpServer): void {
   server.tool(
     'cortex_list_learnings',
     'List recorded anti-patterns and learnings',
-    { auto_block_only: z.boolean().optional(), limit: z.number().optional() },
-    async ({ auto_block_only, limit }) => {
-      getDb();
+    { auto_block_only: z.boolean().optional(), limit: z.number().optional(), include_notes: z.boolean().optional().describe('If true, include linked notes for each learning') },
+    async ({ auto_block_only, limit, include_notes }) => {
+      const db = getDb();
       const result = learnings.listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
+      if (include_notes) {
+        for (const l of result as any[]) {
+          (l as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='learning' AND entity_id=? ORDER BY created_at DESC`).all(l.id);
+        }
+      }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

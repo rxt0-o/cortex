@@ -31,10 +31,16 @@ export function registerErrorTools(server: McpServer): void {
       severity: z.string().optional(),
       file: z.string().optional(),
       limit: z.number().optional(),
+      include_notes: z.boolean().optional().describe('If true, include linked notes for each error'),
     },
     async (input) => {
-      getDb();
+      const db = getDb();
       const result = errors.listErrors(input);
+      if (input.include_notes) {
+        for (const e of result as any[]) {
+          (e as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='error' AND entity_id=? ORDER BY created_at DESC`).all(e.id);
+        }
+      }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

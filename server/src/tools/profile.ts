@@ -154,20 +154,38 @@ export function registerProfileTools(server: McpServer): void {
     text: z.string(),
     tags: z.array(z.string()).optional(),
     session_id: z.string().optional(),
-  }, async ({ text, tags, session_id }) => {
-    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
+    entity_type: z.enum(['decision', 'error', 'learning', 'session']).optional().describe('Link this note to an entity. Example: "decision"'),
+    entity_id: z.number().optional().describe('ID of the linked entity. Example: 42'),
+  }, async ({ text, tags, session_id, entity_type, entity_id }) => {
+    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(
+      text,
+      tags ? JSON.stringify(tags) : null,
+      session_id ?? null,
+      entity_type ?? null,
+      entity_id ?? null,
+    );
     return { content: [{ type: 'text' as const, text: `Note saved (id: ${r.lastInsertRowid})` }] };
   });
 
   server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {
     limit: z.number().optional().default(20),
     search: z.string().optional(),
-  }, async ({ limit, search }) => {
+    entity_type: z.enum(['decision', 'error', 'learning', 'session']).optional().describe('Filter by linked entity type'),
+    entity_id: z.number().optional().describe('Filter by linked entity ID'),
+  }, async ({ limit, search, entity_type, entity_id }) => {
     const db = getDb();
-    const notes = search
-      ? db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit)
-      : db.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
-    return { content: [{ type: 'text' as const, text: (notes as any[]).map(n => `[${n.id}] ${n.created_at.slice(0,10)}: ${n.text}`).join('\n') || 'No notes.' }] };
+    let notes: any[];
+    if (entity_type && entity_id) {
+      notes = db.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, limit) as any[];
+    } else if (search) {
+      notes = db.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit) as any[];
+    } else {
+      notes = db.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit) as any[];
+    }
+    return { content: [{ type: 'text' as const, text: (notes as any[]).map(n => {
+      const link = n.entity_type ? ` [${n.entity_type}:${n.entity_id}]` : '';
+      return `[${n.id}] ${n.created_at.slice(0,10)}${link}: ${n.text}`;
+    }).join('\n') || 'No notes.' }] };
   });
 
   server.tool('cortex_delete_note', 'Delete note by id', {

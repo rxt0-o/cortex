@@ -37,10 +37,16 @@ export function registerDecisionTools(server: McpServer): void {
     {
       category: z.string().optional(),
       limit: z.number().optional(),
+      include_notes: z.boolean().optional().describe('If true, include linked notes for each decision'),
     },
-    async ({ category, limit }) => {
-      getDb();
-      const result = decisions.listDecisions({ category, limit });
+    async (input) => {
+      const db = getDb();
+      const result = decisions.listDecisions({ category: input.category, limit: input.limit });
+      if (input.include_notes) {
+        for (const d of result as any[]) {
+          (d as any).notes = db.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='decision' AND entity_id=? ORDER BY created_at DESC`).all(d.id);
+        }
+      }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

@@ -31231,10 +31231,16 @@ function registerDecisionTools(server2) {
   });
   server2.tool("cortex_list_decisions", "List architectural decisions, optionally filtered by category", {
     category: external_exports3.string().optional(),
-    limit: external_exports3.number().optional()
-  }, async ({ category, limit }) => {
-    getDb();
-    const result = listDecisions({ category, limit });
+    limit: external_exports3.number().optional(),
+    include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each decision")
+  }, async (input) => {
+    const db2 = getDb();
+    const result = listDecisions({ category: input.category, limit: input.limit });
+    if (input.include_notes) {
+      for (const d of result) {
+        d.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='decision' AND entity_id=? ORDER BY created_at DESC`).all(d.id);
+      }
+    }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
   server2.tool("cortex_mark_decision_reviewed", "Mark a decision as reviewed / still current (resets stale flag)", { id: external_exports3.number() }, async ({ id }) => {
@@ -31262,10 +31268,16 @@ function registerErrorTools(server2) {
   server2.tool("cortex_list_errors", "List known errors, optionally filtered by severity or file", {
     severity: external_exports3.string().optional(),
     file: external_exports3.string().optional(),
-    limit: external_exports3.number().optional()
+    limit: external_exports3.number().optional(),
+    include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each error")
   }, async (input) => {
-    getDb();
+    const db2 = getDb();
     const result = listErrors(input);
+    if (input.include_notes) {
+      for (const e of result) {
+        e.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='error' AND entity_id=? ORDER BY created_at DESC`).all(e.id);
+      }
+    }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
   server2.tool("cortex_update_error", "Update an existing error record \u2014 add fix description, prevention rule, or change severity", {
@@ -31384,9 +31396,14 @@ function registerLearningTools(server2) {
     const success2 = deleteLearning(id);
     return { content: [{ type: "text", text: JSON.stringify({ success: success2, deleted_id: id }, null, 2) }] };
   });
-  server2.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional() }, async ({ auto_block_only, limit }) => {
-    getDb();
+  server2.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional(), include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each learning") }, async ({ auto_block_only, limit, include_notes }) => {
+    const db2 = getDb();
     const result = listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
+    if (include_notes) {
+      for (const l of result) {
+        l.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='learning' AND entity_id=? ORDER BY created_at DESC`).all(l.id);
+      }
+    }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
   server2.tool("cortex_check_regression", "Check if content would introduce a known regression or anti-pattern", {
@@ -32388,18 +32405,32 @@ function registerProfileTools(server2) {
   server2.tool("cortex_add_note", "Add scratch pad note", {
     text: external_exports3.string(),
     tags: external_exports3.array(external_exports3.string()).optional(),
-    session_id: external_exports3.string().optional()
-  }, async ({ text, tags, session_id }) => {
-    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id) VALUES (?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null);
+    session_id: external_exports3.string().optional(),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "session"]).optional().describe('Link this note to an entity. Example: "decision"'),
+    entity_id: external_exports3.number().optional().describe("ID of the linked entity. Example: 42")
+  }, async ({ text, tags, session_id, entity_type, entity_id }) => {
+    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null, entity_type ?? null, entity_id ?? null);
     return { content: [{ type: "text", text: `Note saved (id: ${r.lastInsertRowid})` }] };
   });
   server2.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
     limit: external_exports3.number().optional().default(20),
-    search: external_exports3.string().optional()
-  }, async ({ limit, search }) => {
+    search: external_exports3.string().optional(),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "session"]).optional().describe("Filter by linked entity type"),
+    entity_id: external_exports3.number().optional().describe("Filter by linked entity ID")
+  }, async ({ limit, search, entity_type, entity_id }) => {
     const db2 = getDb();
-    const notes = search ? db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit) : db2.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
-    return { content: [{ type: "text", text: notes.map((n) => `[${n.id}] ${n.created_at.slice(0, 10)}: ${n.text}`).join("\n") || "No notes." }] };
+    let notes;
+    if (entity_type && entity_id) {
+      notes = db2.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, limit);
+    } else if (search) {
+      notes = db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit);
+    } else {
+      notes = db2.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
+    }
+    return { content: [{ type: "text", text: notes.map((n) => {
+      const link = n.entity_type ? ` [${n.entity_type}:${n.entity_id}]` : "";
+      return `[${n.id}] ${n.created_at.slice(0, 10)}${link}: ${n.text}`;
+    }).join("\n") || "No notes." }] };
   });
   server2.tool("cortex_delete_note", "Delete note by id", {
     id: external_exports3.number()
