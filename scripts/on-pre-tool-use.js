@@ -72,7 +72,11 @@ function main() {
       FROM learnings WHERE (auto_block = 1 OR core_memory = 1) AND archived != 1 AND detection_regex IS NOT NULL
     `).all();
 
+    const filePath = tool_input.file_path || '';
+    const isDocFile = /\.(md|txt|rst|adoc)$/i.test(filePath);
+
     for (const l of learnings) {
+      if (isDocFile) continue; // Docs/Plans enthalten Code-Snippets — keine false positives
       try {
         if (new RegExp(l.detection_regex, 'gm').test(content)) {
           warnings.push({ type: 'anti-pattern', severity: l.severity,
