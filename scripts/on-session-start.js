@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // SessionStart Hook — Loads relevant context and injects it + starts daemon
 
-import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { openDb } from './ensure-db.js';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 // Preloaded Tool Guidance (memory + tracking) — aus tool-registry.ts generiert
 const PRELOADED_TOOL_GUIDANCE = `## Memory & Context Tools
@@ -31,7 +34,7 @@ Use when noting unfinished work or setting reminders.
 function ensureDaemonRunning(cwd) {
   try {
     const pidPath = join(cwd, '.claude', 'cortex-daemon.pid');
-    const daemonScript = 'C:/Users/toasted/Desktop/data/cortex/daemon/dist/index.js';
+    const daemonScript = join(__dirname, '..', 'daemon', 'dist', 'index.js');
 
     if (!existsSync(daemonScript)) return; // Daemon nicht gebaut
 
