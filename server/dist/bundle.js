@@ -31272,7 +31272,6 @@ function registerErrorTools(server2) {
     })).optional().describe("Add multiple errors at once")
   }, async (input) => {
     if (input.batch && input.batch.length > 0) {
-      getDb();
       const results = input.batch.map((item) => addError(item));
       return { content: [{ type: "text", text: JSON.stringify({ added: results.length, ids: results.map((r) => r.id) }, null, 2) }] };
     }
@@ -32441,7 +32440,7 @@ function registerProfileTools(server2) {
     text: external_exports3.string(),
     tags: external_exports3.array(external_exports3.string()).optional(),
     session_id: external_exports3.string().optional(),
-    entity_type: external_exports3.enum(["decision", "error", "learning", "session"]).optional().describe('Link this note to an entity. Example: "decision"'),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional().describe('Link this note to an entity. Example: "decision"'),
     entity_id: external_exports3.number().optional().describe("ID of the linked entity. Example: 42")
   }, async ({ text, tags, session_id, entity_type, entity_id }) => {
     const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null, entity_type ?? null, entity_id ?? null);
@@ -32450,7 +32449,7 @@ function registerProfileTools(server2) {
   server2.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
     limit: external_exports3.number().optional().default(20),
     search: external_exports3.string().optional(),
-    entity_type: external_exports3.enum(["decision", "error", "learning", "session"]).optional().describe("Filter by linked entity type"),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional().describe("Filter by linked entity type"),
     entity_id: external_exports3.number().optional().describe("Filter by linked entity ID")
   }, async ({ limit, search, entity_type, entity_id }) => {
     const db2 = getDb();

@@ -40,7 +40,8 @@ server/src/
     ├── diffs.ts
     ├── conventions.ts
     ├── health.ts
-    └── tool-registry.ts
+    ├── tool-registry.ts
+    └── activity.ts
 ```
 
 ## Regeln

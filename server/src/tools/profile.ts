@@ -154,7 +154,7 @@ export function registerProfileTools(server: McpServer): void {
     text: z.string(),
     tags: z.array(z.string()).optional(),
     session_id: z.string().optional(),
-    entity_type: z.enum(['decision', 'error', 'learning', 'session']).optional().describe('Link this note to an entity. Example: "decision"'),
+    entity_type: z.enum(['decision', 'error', 'learning', 'note', 'unfinished', 'session']).optional().describe('Link this note to an entity. Example: "decision"'),
     entity_id: z.number().optional().describe('ID of the linked entity. Example: 42'),
   }, async ({ text, tags, session_id, entity_type, entity_id }) => {
     const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(
@@ -170,7 +170,7 @@ export function registerProfileTools(server: McpServer): void {
   server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {
     limit: z.number().optional().default(20),
     search: z.string().optional(),
-    entity_type: z.enum(['decision', 'error', 'learning', 'session']).optional().describe('Filter by linked entity type'),
+    entity_type: z.enum(['decision', 'error', 'learning', 'note', 'unfinished', 'session']).optional().describe('Filter by linked entity type'),
     entity_id: z.number().optional().describe('Filter by linked entity ID'),
   }, async ({ limit, search, entity_type, entity_id }) => {
     const db = getDb();
