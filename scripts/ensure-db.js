@@ -149,6 +149,22 @@ export function openDb(cwd) {
     `CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN INSERT INTO decisions_fts(rowid, title, reasoning) VALUES (new.id, new.title, new.reasoning); END`,
     `CREATE TRIGGER IF NOT EXISTS errors_ai AFTER INSERT ON errors BEGIN INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description) VALUES (new.id, new.error_message, new.root_cause, new.fix_description); END`,
     `CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid, text) VALUES (new.id, new.text); END`,
+    // v05: entity-links fuer notes + activity_log
+    `ALTER TABLE notes ADD COLUMN entity_type TEXT`,
+    `ALTER TABLE notes ADD COLUMN entity_id INTEGER`,
+    `CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT DEFAULT (datetime('now')),
+      tool_name TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id INTEGER,
+      action TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      session_id TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 
