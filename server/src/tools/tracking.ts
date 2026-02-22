@@ -34,13 +34,19 @@ export function registerTrackingTools(server: McpServer): void {
   server.tool(
     'cortex_resolve_unfinished',
     'Mark an unfinished item as resolved/done',
-    { id: z.number(), session_id: z.string().optional() },
-    async ({ id, session_id }) => {
+    {
+      id: z.number().optional().describe('Single item ID to resolve'),
+      ids: z.array(z.number()).optional().describe('Multiple item IDs to resolve at once. Example: [1, 2, 3]'),
+      session_id: z.string().optional(),
+    },
+    async ({ id, ids, session_id }) => {
       getDb();
-      const item = unfinished.resolveUnfinished(id, session_id);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ success: !!item, item }, null, 2) }],
-      };
+      const toResolve = ids ?? (id !== undefined ? [id] : []);
+      if (toResolve.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'Error: provide id or ids' }] };
+      }
+      const results = toResolve.map(i => ({ id: i, item: unfinished.resolveUnfinished(i, session_id) }));
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ resolved: results.length, results }, null, 2) }] };
     }
   );
 

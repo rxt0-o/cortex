@@ -31259,8 +31259,23 @@ function registerErrorTools(server2) {
     files_involved: external_exports3.array(external_exports3.string()).optional().describe('Files where the error occurred. Example: ["server/src/index.ts", "server/src/modules/sessions.ts"]'),
     prevention_rule: external_exports3.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession(" or "FTS5"'),
     severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional().describe("Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down"),
-    session_id: external_exports3.string().optional()
+    session_id: external_exports3.string().optional(),
+    batch: external_exports3.array(external_exports3.object({
+      error_message: external_exports3.string(),
+      root_cause: external_exports3.string().optional(),
+      fix_description: external_exports3.string().optional(),
+      fix_diff: external_exports3.string().optional(),
+      files_involved: external_exports3.array(external_exports3.string()).optional(),
+      prevention_rule: external_exports3.string().optional(),
+      severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional(),
+      session_id: external_exports3.string().optional()
+    })).optional().describe("Add multiple errors at once")
   }, async (input) => {
+    if (input.batch && input.batch.length > 0) {
+      getDb();
+      const results = input.batch.map((item) => addError(item));
+      return { content: [{ type: "text", text: JSON.stringify({ added: results.length, ids: results.map((r) => r.id) }, null, 2) }] };
+    }
     getDb();
     const error48 = addError(input);
     return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
@@ -31368,8 +31383,22 @@ function registerLearningTools(server2) {
     detection_regex: external_exports3.string().optional().describe('Regex to auto-detect this pattern in code. Example: "db.prepare(.*).*.run(" or "for.*getDb()"'),
     severity: external_exports3.enum(["low", "medium", "high"]).optional().describe("Impact: low=minor quality issue, medium=likely bug, high=will cause failures"),
     auto_block: external_exports3.boolean().optional().describe("If true, cortex_check_regression will flag this pattern before every file edit"),
-    session_id: external_exports3.string().optional()
+    session_id: external_exports3.string().optional(),
+    batch: external_exports3.array(external_exports3.object({
+      anti_pattern: external_exports3.string(),
+      correct_pattern: external_exports3.string(),
+      context: external_exports3.string(),
+      detection_regex: external_exports3.string().optional(),
+      severity: external_exports3.enum(["low", "medium", "high"]).optional(),
+      auto_block: external_exports3.boolean().optional(),
+      session_id: external_exports3.string().optional()
+    })).optional().describe('Add multiple learnings at once. Example: [{anti_pattern: "foo", correct_pattern: "bar", context: "baz"}]')
   }, async (input) => {
+    if (input.batch && input.batch.length > 0) {
+      getDb();
+      const results = input.batch.map((item) => addLearning(item));
+      return { content: [{ type: "text", text: JSON.stringify({ added: results.length, results: results.map((r) => ({ id: r.learning.id, duplicate: !!r.duplicate })) }, null, 2) }] };
+    }
     getDb();
     const { learning, duplicate } = addLearning(input);
     let text = "Learning saved (id: " + learning.id + ")";
@@ -31669,12 +31698,18 @@ function registerTrackingTools(server2) {
     const item = addUnfinished(input);
     return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }] };
   });
-  server2.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/done", { id: external_exports3.number(), session_id: external_exports3.string().optional() }, async ({ id, session_id }) => {
+  server2.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/done", {
+    id: external_exports3.number().optional().describe("Single item ID to resolve"),
+    ids: external_exports3.array(external_exports3.number()).optional().describe("Multiple item IDs to resolve at once. Example: [1, 2, 3]"),
+    session_id: external_exports3.string().optional()
+  }, async ({ id, ids, session_id }) => {
     getDb();
-    const item = resolveUnfinished(id, session_id);
-    return {
-      content: [{ type: "text", text: JSON.stringify({ success: !!item, item }, null, 2) }]
-    };
+    const toResolve = ids ?? (id !== void 0 ? [id] : []);
+    if (toResolve.length === 0) {
+      return { content: [{ type: "text", text: "Error: provide id or ids" }] };
+    }
+    const results = toResolve.map((i) => ({ id: i, item: resolveUnfinished(i, session_id) }));
+    return { content: [{ type: "text", text: JSON.stringify({ resolved: results.length, results }, null, 2) }] };
   });
   server2.tool("cortex_add_intent", "Store a stated intention for follow-up in future sessions", {
     intent: external_exports3.string().describe("What you plan to do next"),

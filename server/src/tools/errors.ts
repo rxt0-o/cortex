@@ -16,8 +16,23 @@ export function registerErrorTools(server: McpServer): void {
       prevention_rule: z.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession\(" or "FTS5"'),
       severity: z.enum(['low', 'medium', 'high', 'critical']).optional().describe('Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down'),
       session_id: z.string().optional(),
+      batch: z.array(z.object({
+        error_message: z.string(),
+        root_cause: z.string().optional(),
+        fix_description: z.string().optional(),
+        fix_diff: z.string().optional(),
+        files_involved: z.array(z.string()).optional(),
+        prevention_rule: z.string().optional(),
+        severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+        session_id: z.string().optional(),
+      })).optional().describe('Add multiple errors at once'),
     },
     async (input) => {
+      if (input.batch && input.batch.length > 0) {
+        getDb();
+        const results = input.batch.map(item => errors.addError(item));
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ added: results.length, ids: results.map((r: any) => r.id) }, null, 2) }] };
+      }
       getDb();
       const error = errors.addError(input);
       return { content: [{ type: 'text' as const, text: JSON.stringify(error, null, 2) }] };

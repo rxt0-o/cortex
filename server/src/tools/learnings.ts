@@ -17,8 +17,22 @@ export function registerLearningTools(server: McpServer): void {
       severity: z.enum(['low', 'medium', 'high']).optional().describe('Impact: low=minor quality issue, medium=likely bug, high=will cause failures'),
       auto_block: z.boolean().optional().describe('If true, cortex_check_regression will flag this pattern before every file edit'),
       session_id: z.string().optional(),
+      batch: z.array(z.object({
+        anti_pattern: z.string(),
+        correct_pattern: z.string(),
+        context: z.string(),
+        detection_regex: z.string().optional(),
+        severity: z.enum(['low', 'medium', 'high']).optional(),
+        auto_block: z.boolean().optional(),
+        session_id: z.string().optional(),
+      })).optional().describe('Add multiple learnings at once. Example: [{anti_pattern: "foo", correct_pattern: "bar", context: "baz"}]'),
     },
     async (input) => {
+      if (input.batch && input.batch.length > 0) {
+        getDb();
+        const results = input.batch.map(item => learnings.addLearning(item));
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ added: results.length, results: results.map(r => ({ id: r.learning.id, duplicate: !!r.duplicate })) }, null, 2) }] };
+      }
       getDb();
       const { learning, duplicate } = learnings.addLearning(input);
       let text = 'Learning saved (id: ' + learning.id + ')';
