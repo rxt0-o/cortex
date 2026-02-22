@@ -113,8 +113,29 @@ export function openDb(cwd) {
     `ALTER TABLE sessions ADD COLUMN mood_score INTEGER`,
     `ALTER TABLE notes ADD COLUMN project TEXT`,
     `ALTER TABLE unfinished ADD COLUMN project TEXT`,
+    // FTS5 Virtual Tables fuer BM25-Search
+    `CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(anti_pattern, correct_pattern, context, content='learnings', content_rowid='id')`,
+    `CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts USING fts5(title, reasoning, content='decisions', content_rowid='id')`,
+    `CREATE VIRTUAL TABLE IF NOT EXISTS errors_fts USING fts5(error_message, root_cause, fix_description, content='errors', content_rowid='id')`,
+    `CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(text, content='notes', content_rowid='id')`,
+    // INSERT Trigger fuer automatische FTS-Sync
+    `CREATE TRIGGER IF NOT EXISTS learnings_ai AFTER INSERT ON learnings BEGIN INSERT INTO learnings_fts(rowid, anti_pattern, correct_pattern, context) VALUES (new.id, new.anti_pattern, new.correct_pattern, new.context); END`,
+    `CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN INSERT INTO decisions_fts(rowid, title, reasoning) VALUES (new.id, new.title, new.reasoning); END`,
+    `CREATE TRIGGER IF NOT EXISTS errors_ai AFTER INSERT ON errors BEGIN INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description) VALUES (new.id, new.error_message, new.root_cause, new.fix_description); END`,
+    `CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid, text) VALUES (new.id, new.text); END`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
+
+  // FTS Backfill: bestehende Daten in FTS-Tabellen laden (nur wenn leer)
+  try {
+    const ftsCount = db.prepare('SELECT COUNT(*) as c FROM learnings_fts').get()?.c ?? 0;
+    if (ftsCount === 0) {
+      db.prepare('INSERT INTO learnings_fts(rowid, anti_pattern, correct_pattern, context) SELECT id, anti_pattern, correct_pattern, context FROM learnings WHERE archived_at IS NULL').run();
+      db.prepare('INSERT INTO decisions_fts(rowid, title, reasoning) SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL').run();
+      db.prepare("INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description) SELECT id, error_message, COALESCE(root_cause,''), COALESCE(fix_description,'') FROM errors").run();
+      db.prepare('INSERT INTO notes_fts(rowid, text) SELECT id, text FROM notes').run();
+    }
+  } catch { /* FTS-Tabellen noch nicht vorhanden oder bereits befuellt */ }
 
   return db;
 }
