@@ -60,7 +60,7 @@ function main() {
   const dbPath = join(claudeDir, 'cortex.db');
   if (!existsSync(dbPath)) process.exit(0);
 
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const db = new DatabaseSync(dbPath);
 
   try {
     const warnings = [];
@@ -68,20 +68,26 @@ function main() {
 
     // 1. Learnings with auto_block
     const learnings = db.prepare(`
-      SELECT id, anti_pattern, correct_pattern, detection_regex, severity
+      SELECT id, anti_pattern, correct_pattern, detection_regex, severity, COALESCE(confidence, 0.7) as confidence, core_memory
       FROM learnings WHERE (auto_block = 1 OR core_memory = 1) AND archived != 1 AND detection_regex IS NOT NULL
     `).all();
 
     const filePath = tool_input.file_path || '';
     const isDocFile = /\.(md|txt|rst|adoc)$/i.test(filePath);
 
+    const boostStmt = db.prepare(`UPDATE learnings SET confidence = MIN(0.9, COALESCE(confidence, 0.7) + 0.1) WHERE id = ?`);
     for (const l of learnings) {
       if (isDocFile) continue; // Docs/Plans enthalten Code-Snippets — keine false positives
       try {
         if (new RegExp(l.detection_regex, 'gm').test(content)) {
+          // Boost confidence on match (nicht für core_memory — die sind immer 0.9)
+          if (!l.core_memory) {
+            try { boostStmt.run(l.id); } catch { /* non-critical */ }
+          }
           warnings.push({ type: 'anti-pattern', severity: l.severity,
             message: `Anti-pattern: "${l.anti_pattern}" -> Use: "${l.correct_pattern}"` });
-          if (l.severity === 'high') shouldBlock = true;
+          // Block nur wenn confidence > 0.4 (oder core_memory)
+          if (l.severity === 'high' && (l.confidence > 0.4 || l.core_memory)) shouldBlock = true;
         }
       } catch { /* invalid regex */ }
     }
