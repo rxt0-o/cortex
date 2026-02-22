@@ -31706,7 +31706,7 @@ function registerTrackingTools(server2) {
     getDb();
     const toResolve = ids ?? (id !== void 0 ? [id] : []);
     if (toResolve.length === 0) {
-      return { content: [{ type: "text", text: "Error: provide id or ids" }] };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "provide id or ids" }) }] };
     }
     const results = toResolve.map((i) => ({ id: i, item: resolveUnfinished(i, session_id) }));
     return { content: [{ type: "text", text: JSON.stringify({ resolved: results.length, results }, null, 2) }] };

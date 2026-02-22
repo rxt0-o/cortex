@@ -31,7 +31,7 @@ export function registerErrorTools(server: McpServer): void {
       if (input.batch && input.batch.length > 0) {
         getDb();
         const results = input.batch.map(item => errors.addError(item));
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ added: results.length, ids: results.map((r: any) => r.id) }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ added: results.length, ids: (results as Array<{ id: number | bigint }>).map(r => r.id) }, null, 2) }] };
       }
       getDb();
       const error = errors.addError(input);
