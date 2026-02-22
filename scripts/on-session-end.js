@@ -124,6 +124,11 @@ async function main() {
       db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
     } catch {}
 
+    // Confidence Decay: -0.01 pro Session für nicht-gepinnte Learnings
+    try {
+      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, COALESCE(confidence, 0.7) - 0.01) WHERE core_memory != 1 AND archived != 1`).run();
+    } catch {}
+
     // Priority scoring: bump high-priority items that are overdue
     try {
       db.prepare(`UPDATE unfinished SET priority_score = COALESCE(priority_score, 50) + 5 WHERE resolved_at IS NULL AND created_at < datetime('now','-3 days') AND priority='high'`).run();
