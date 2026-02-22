@@ -266,6 +266,20 @@ function main() {
       for (const l of manualLearnings) parts.push(`  ! ${l.anti_pattern}`);
     }
 
+    // Low-confidence Learnings: User fragen ob behalten oder archivieren
+    const lowConfidence = db.prepare(`
+      SELECT id, anti_pattern, correct_pattern, COALESCE(confidence, 0.7) as confidence
+      FROM learnings WHERE COALESCE(confidence, 0.7) <= 0.4 AND core_memory != 1 AND archived != 1
+      ORDER BY confidence ASC LIMIT 3
+    `).all();
+
+    if (lowConfidence.length > 0) {
+      parts.push('REVIEW NEEDED (low confidence):');
+      for (const l of lowConfidence) {
+        parts.push(`  ? Learning #${l.id} (${(l.confidence * 100).toFixed(0)}%): "${l.anti_pattern}" — keep or archive?`);
+      }
+    }
+
     // 6. Health
     // Weekly digest (Monday or 7+ days since last digest)
     try {
