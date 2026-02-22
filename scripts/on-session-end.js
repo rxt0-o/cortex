@@ -120,13 +120,13 @@ async function main() {
 
     // Memory Consolidation: archive unused learnings, promote core memories
     try {
-      db.prepare(`UPDATE learnings SET archived=1 WHERE auto_block=1 AND theoretical_hits=0 AND created_at < datetime('now','-30 days') AND core_memory!=1`).run();
+      db.prepare(`UPDATE learnings SET archived=1, archived_at=datetime('now') WHERE auto_block=1 AND theoretical_hits=0 AND created_at < datetime('now','-30 days') AND core_memory!=1 AND archived_at IS NULL`).run();
       db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
     } catch {}
 
     // Confidence Decay: -0.01 pro Session für auto_block Learnings (nicht core_memory)
     try {
-      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, confidence - 0.01) WHERE auto_block = 1 AND core_memory != 1 AND archived != 1`).run();
+      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, confidence - 0.01) WHERE auto_block = 1 AND core_memory != 1 AND archived_at IS NULL`).run();
     } catch {}
 
     // Priority scoring: bump high-priority items that are overdue

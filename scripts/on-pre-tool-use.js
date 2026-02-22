@@ -69,7 +69,7 @@ function main() {
     // 1. Learnings with auto_block
     const learnings = db.prepare(`
       SELECT id, anti_pattern, correct_pattern, detection_regex, severity, confidence as confidence, core_memory
-      FROM learnings WHERE (auto_block = 1 OR core_memory = 1) AND archived != 1 AND detection_regex IS NOT NULL
+      FROM learnings WHERE (auto_block = 1 OR core_memory = 1) AND archived_at IS NULL AND detection_regex IS NOT NULL
     `).all();
 
     const filePath = tool_input.file_path || '';
