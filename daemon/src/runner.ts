@@ -42,7 +42,7 @@ export function buildAgentContext(projectPath: string, agentName?: string): Agen
     const newDecisions = (db.prepare(`SELECT COUNT(*) as n FROM decisions WHERE created_at > datetime('now', '-2 hours') AND archived != 1`).get() as any)?.n ?? 0;
 
     const lastAgentRun = agentName
-      ? db.prepare(`SELECT agent_name, started_at, success FROM agent_runs WHERE agent_name = ? ORDER BY started_at DESC LIMIT 1`).get(agentName) as any
+      ? ((db.prepare(`SELECT agent_name, started_at, success FROM agent_runs WHERE agent_name = ? ORDER BY started_at DESC LIMIT 1`).get(agentName) as any) ?? null)
       : null;
 
     db.close();
