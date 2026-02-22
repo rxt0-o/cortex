@@ -104,16 +104,26 @@ function main() {
       }
     }
 
-      // 6b. Loop detector: warn if same file edited 3+ times in 5 minutes
+      // 6b. Loop detector: warn if same file/function edited 3+ times in 5 minutes
+      // Inline function detection for granular tracking
+      let changedFunction = '';
+      try {
+        const changedContent = (tool_input?.new_string ?? tool_input?.content ?? '');
+        const pats = [/(?:async\s+)?function\s+(\w+)/, /const\s+(\w+)\s*=/, /class\s+(\w+)/];
+        for (const p of pats) { const m = changedContent.match(p); if (m?.[1]) { changedFunction = m[1]; break; } }
+      } catch {}
+      const trackKey = changedFunction ? (filePath + ':' + changedFunction) : filePath;
+      const trackLabel = changedFunction ? (filePath + ' -> ' + changedFunction + '()') : filePath;
+
       const now = Date.now();
-      const tracked = _editTracker.get(filePath) || { count: 0, firstAt: now };
+      const tracked = _editTracker.get(trackKey) || { count: 0, firstAt: now };
       tracked.count++;
-      _editTracker.set(filePath, tracked);
+      _editTracker.set(trackKey, tracked);
       if (tracked.count >= 3 && (now - tracked.firstAt) < 5 * 60 * 1000) {
         process.stdout.write(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PostToolUse',
-            additionalContext: ,
+            additionalContext: `LOOP DETECTED: ${trackLabel} edited ${tracked.count}x in 5 minutes — consider stepping back`,
           },
         }));
       }
