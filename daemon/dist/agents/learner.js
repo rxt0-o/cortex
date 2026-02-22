@@ -79,8 +79,22 @@ const LEARNER_SCHEMA = {
             items: { type: 'number' },
             description: 'IDs von Unfinished-Items die in dieser Session erledigt wurden',
         },
+        conventions: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string' },
+                    description: { type: 'string' },
+                    scope: { type: 'string', enum: ['global', 'frontend', 'backend', 'database'] },
+                    detection_pattern: { type: ['string', 'null'] },
+                    violation_pattern: { type: ['string', 'null'] },
+                },
+                required: ['name', 'description'],
+            },
+        },
     },
-    required: ['learnings', 'errors', 'architecture_updates', 'facts', 'insights', 'resolved_unfinished_ids'],
+    required: ['learnings', 'errors', 'architecture_updates', 'facts', 'insights', 'resolved_unfinished_ids', 'conventions'],
 };
 export async function runLearnerAgent(projectPath, transcriptPath) {
     const dbPath = join(projectPath, '.claude', 'cortex.db');
@@ -158,6 +172,9 @@ Sei streng: lieber "noise" als falsch "important".
 4. Beobachtungen ohne Anti-Pattern -> insights (observation + implication)
 5. Neue Architektur-Zusammenhaenge -> architecture_updates
 6. Offene Unfinished-Items die in dieser Session abgeschlossen wurden -> resolved_unfinished_ids (Liste der IDs)
+7. Wiederkehrende Code-Konventionen -> conventions (name + description + scope)
+   Beispiele: "ESM Imports statt require", "Fehler auf stderr, nie exit(1)", "DB-Migrationen als ALTER TABLE"
+   Nur stabile, wiederholte Muster — keine Einmal-Beobachtungen.
 
 Facts-Kategorien: "fact" (technische Tatsache) | "preference" (Nutzerpraeferenz) | "entity" (Person/System/Service) | "context" (Projektkontext)
 </analysis_targets>
@@ -210,7 +227,16 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
       "relevance": "maybe_relevant"
     }
   ],
-  "resolved_unfinished_ids": [11, 42]
+  "resolved_unfinished_ids": [11, 42],
+  "conventions": [
+    {
+      "name": "ESM Imports",
+      "description": "Alle Hook-Scripts nutzen import statt require",
+      "scope": "global",
+      "detection_pattern": "^import .+ from",
+      "violation_pattern": "require\\("
+    }
+  ],
 }`;
         const result = await runClaudeAgent({ prompt, projectPath, timeoutMs: 120_000, jsonSchema: LEARNER_SCHEMA, model: 'claude-sonnet-4-6', agentName: 'learner' });
         if (!result.success || !result.output) {
@@ -343,6 +369,25 @@ Antworte NUR mit diesem JSON. Leere Arrays sind OK — bevorzuge leere Arrays st
                     db.prepare(`UPDATE unfinished SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL`)
                         .run(ts, id);
                     process.stdout.write(`[cortex-daemon] Learner: resolved unfinished #${id}\n`);
+                    saved++;
+                }
+                catch { /* ignorieren */ }
+            }
+        }
+        // Conventions speichern
+        if (analysis.conventions) {
+            for (const c of analysis.conventions) {
+                if (!c.name || !c.description)
+                    continue;
+                try {
+                    db.prepare(`
+            INSERT INTO conventions (name, description, scope, detection_pattern, violation_pattern, source)
+            VALUES (?, ?, ?, ?, ?, 'learner-agent')
+            ON CONFLICT(name) DO UPDATE SET
+              description = excluded.description,
+              detection_pattern = COALESCE(excluded.detection_pattern, detection_pattern),
+              violation_pattern = COALESCE(excluded.violation_pattern, violation_pattern)
+          `).run(c.name, c.description, c.scope ?? 'global', c.detection_pattern ?? null, c.violation_pattern ?? null);
                     saved++;
                 }
                 catch { /* ignorieren */ }

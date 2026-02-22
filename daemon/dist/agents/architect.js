@@ -2,12 +2,23 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { runClaudeAgent } from '../runner.js';
-export async function runArchitectAgent(projectPath) {
+export async function runArchitectAgent(projectPath, triggerReason) {
     const dbPath = join(projectPath, '.claude', 'cortex.db');
     if (!existsSync(dbPath))
         return;
     const db = new DatabaseSync(dbPath);
     try {
+        // Post-Session: nur ausfuehren wenn genuegend Aenderungen
+        if (triggerReason === 'post_session') {
+            const recentDiffs = db.prepare(`
+        SELECT COUNT(DISTINCT file_path) as c FROM diffs
+        WHERE created_at > datetime('now', '-2 hours')
+      `).get()?.c ?? 0;
+            if (recentDiffs < 5) {
+                process.stdout.write('[cortex-daemon] Architect: <5 changed files, skipping post-session refresh\n');
+                return;
+            }
+        }
         // Bekannte Dateien aus DB lesen (max 200)
         const files = db.prepare(`
       SELECT f.path, f.file_type, f.description, m.name as module_name

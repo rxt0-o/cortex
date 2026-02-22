@@ -9,6 +9,7 @@ import { runSerendipityAgent } from './agents/serendipityAgent.js';
 import { runDriftDetectorAgent } from './agents/drift-detector.js';
 import { runMoodScorerAgent } from './agents/moodScorer.js';
 import { runSkillAdvisorAgent } from './agents/skillAdvisor.js';
+import { runPatternAgent } from './agents/patternAgent.js';
 // Args: node daemon/dist/index.js --project <path>
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf('--project');
@@ -92,6 +93,12 @@ setInterval(() => {
             });
             runSkillAdvisorAgent(projectPath, event.transcript_path).catch(err => {
                 process.stderr.write(`[cortex-daemon] SkillAdvisor error: ${err}\n`);
+            });
+            runPatternAgent(projectPath, event.session_id).catch(err => {
+                process.stderr.write(`[cortex-daemon] PatternAgent error: ${err}\n`);
+            });
+            runArchitectAgent(projectPath, 'post_session').catch(err => {
+                process.stderr.write(`[cortex-daemon] Architect (post-session) error: ${err}\n`);
             });
             processed.push(event);
         }
