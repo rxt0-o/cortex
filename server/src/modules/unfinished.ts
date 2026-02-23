@@ -31,7 +31,14 @@ export function addUnfinished(input: AddUnfinishedInput): UnfinishedItem {
     input.priority ?? 'medium'
   );
 
-  return getUnfinished(Number(result.lastInsertRowid))!;
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Fire-and-forget embedding
+  import('./embed-hooks.js').then(({ embedAsync }) =>
+    embedAsync('todo', insertedId, { description: input.description, context: input.context })
+  ).catch(() => {});
+
+  return getUnfinished(insertedId)!;
 }
 
 export function getUnfinished(id: number): UnfinishedItem | null {

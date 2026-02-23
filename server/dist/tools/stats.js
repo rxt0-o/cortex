@@ -212,6 +212,57 @@ export function registerStatsTools(server) {
             return { content: [{ type: 'text', text: `Error: ${e}` }] };
         }
     });
+    server.tool('cortex_backfill_embeddings', 'Generate embeddings for all existing entities that don\'t have one yet', {}, async () => {
+        const db = getDb();
+        const { embed, storeEmbedding, buildEmbeddingText } = await import('../modules/embeddings.js');
+        const configs = [
+            { type: 'learning', table: 'learnings', idCol: 'id', fields: ['anti_pattern', 'correct_pattern', 'context'] },
+            { type: 'decision', table: 'decisions', idCol: 'id', fields: ['title', 'reasoning'] },
+            { type: 'error', table: 'errors', idCol: 'id', fields: ['error_message', 'root_cause', 'fix_description'] },
+            { type: 'note', table: 'notes', idCol: 'id', fields: ['text'] },
+            { type: 'session', table: 'sessions', idCol: 'id', fields: ['summary', 'key_changes'] },
+            { type: 'todo', table: 'unfinished', idCol: 'id', fields: ['description', 'context'] },
+        ];
+        let generated = 0;
+        let skipped = 0;
+        let errCount = 0;
+        for (const cfg of configs) {
+            try {
+                const rows = db.prepare(`
+            SELECT s.* FROM ${cfg.table} s
+            LEFT JOIN embeddings e ON e.entity_type = ? AND e.entity_id = CAST(s.${cfg.idCol} AS TEXT)
+            WHERE e.id IS NULL
+          `).all(cfg.type);
+                for (const row of rows) {
+                    try {
+                        const fieldMap = {};
+                        for (const f of cfg.fields)
+                            fieldMap[f] = row[f];
+                        const text = buildEmbeddingText(fieldMap);
+                        if (!text || text.length < 10) {
+                            skipped++;
+                            continue;
+                        }
+                        const vec = await embed(text);
+                        storeEmbedding(cfg.type, String(row[cfg.idCol]), vec);
+                        generated++;
+                    }
+                    catch {
+                        errCount++;
+                    }
+                }
+            }
+            catch {
+                errCount++;
+            }
+        }
+        return {
+            content: [{
+                    type: 'text',
+                    text: `Backfill complete: ${generated} embeddings generated, ${skipped} skipped (too short), ${errCount} errors.`,
+                }],
+        };
+    });
     server.tool('cortex_agent_status', 'Show daemon agent run history with success rates and errors', {
         limit: z.number().optional().default(20).describe('Max number of agent runs to return. input_examples: [10, 50]'),
         agent_name: z.string().optional().describe('Filter by agent name (learner, architect, context, etc.). input_examples: ["learner", "architect"]'),

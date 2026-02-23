@@ -212,6 +212,17 @@ export function openDb(cwd) {
     `ALTER TABLE project_files ADD COLUMN cluster_id INTEGER`,
     `ALTER TABLE learnings ADD COLUMN confidence REAL DEFAULT 0.7`,
     `ALTER TABLE learnings ADD COLUMN shared INTEGER DEFAULT 0`,
+    // Embeddings table for semantic search
+    `CREATE TABLE IF NOT EXISTS embeddings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      embedding BLOB NOT NULL,
+      model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id)`,
   ];
   for (const sql of v04migrations) { try { db.exec(sql); } catch {} }  // eslint-disable-line
 

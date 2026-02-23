@@ -97,7 +97,14 @@ export function addError(input: AddErrorInput): CortexError {
     input.severity ?? 'medium'
   );
 
-  return getError(Number(result.lastInsertRowid))!;
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Fire-and-forget embedding
+  import('./embed-hooks.js').then(({ embedAsync }) =>
+    embedAsync('error', insertedId, { error_message: input.error_message, root_cause: input.root_cause, fix_description: input.fix_description })
+  ).catch(() => {});
+
+  return getError(insertedId)!;
 }
 
 export function getError(id: number): CortexError | null {

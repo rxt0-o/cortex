@@ -38,7 +38,10 @@ export function addError(input) {
       root_cause, fix_description, fix_diff, files_involved, prevention_rule, severity)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, timestamp, timestamp, signature, input.error_message, input.root_cause ?? null, input.fix_description ?? null, input.fix_diff ?? null, toJson(input.files_involved), input.prevention_rule ?? null, input.severity ?? 'medium');
-    return getError(Number(result.lastInsertRowid));
+    const insertedId = Number(result.lastInsertRowid);
+    // Fire-and-forget embedding
+    import('./embed-hooks.js').then(({ embedAsync }) => embedAsync('error', insertedId, { error_message: input.error_message, root_cause: input.root_cause, fix_description: input.fix_description })).catch(() => { });
+    return getError(insertedId);
 }
 export function getError(id) {
     const db = getDb();

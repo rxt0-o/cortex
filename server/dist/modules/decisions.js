@@ -10,7 +10,10 @@ export function addDecision(input) {
     INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? 'high');
-    const decision = getDecision(Number(result.lastInsertRowid));
+    const insertedId = Number(result.lastInsertRowid);
+    // Fire-and-forget embedding
+    import('./embed-hooks.js').then(({ embedAsync }) => embedAsync('decision', insertedId, { title: input.title, reasoning: input.reasoning })).catch(() => { });
+    const decision = getDecision(insertedId);
     if (similar.length > 0) {
         const top = similar[0];
         const topEntry = existing.find(e => e.id === top.id);

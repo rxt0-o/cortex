@@ -5,7 +5,7 @@ import fs from 'fs';
 
 let db: InstanceType<typeof DatabaseSync> | null = null;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (

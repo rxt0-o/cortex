@@ -62,7 +62,14 @@ export function addLearning(input: AddLearningInput): AddLearningResult {
     db.prepare('UPDATE learnings SET shared = 1 WHERE id = ?').run(Number(result.lastInsertRowid));
   }
 
-  const learning = getLearning(Number(result.lastInsertRowid))!;
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Fire-and-forget embedding
+  import('./embed-hooks.js').then(({ embedAsync }) =>
+    embedAsync('learning', insertedId, { anti_pattern: input.anti_pattern, correct_pattern: input.correct_pattern, context: input.context })
+  ).catch(() => {});
+
+  const learning = getLearning(insertedId)!;
 
   if (similar.length > 0) {
     const top = similar[0];

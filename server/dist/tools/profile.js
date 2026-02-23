@@ -135,7 +135,10 @@ export function registerProfileTools(server) {
         entity_id: z.number().optional().describe('ID of the linked entity. Example: 42'),
     }, async ({ text, tags, session_id, entity_type, entity_id }) => {
         const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null, entity_type ?? null, entity_id ?? null);
-        return { content: [{ type: 'text', text: `Note saved (id: ${r.lastInsertRowid})` }] };
+        // Fire-and-forget embedding
+        const noteId = Number(r.lastInsertRowid);
+        import('../modules/embed-hooks.js').then(({ embedAsync }) => embedAsync('note', noteId, { text })).catch(() => { });
+        return { content: [{ type: 'text', text: `Note saved (id: ${noteId})` }] };
     });
     server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {
         limit: z.number().optional().default(20),

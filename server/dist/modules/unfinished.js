@@ -5,7 +5,10 @@ export function addUnfinished(input) {
     INSERT INTO unfinished (session_id, created_at, description, context, priority)
     VALUES (?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.description, input.context ?? null, input.priority ?? 'medium');
-    return getUnfinished(Number(result.lastInsertRowid));
+    const insertedId = Number(result.lastInsertRowid);
+    // Fire-and-forget embedding
+    import('./embed-hooks.js').then(({ embedAsync }) => embedAsync('todo', insertedId, { description: input.description, context: input.context })).catch(() => { });
+    return getUnfinished(insertedId);
 }
 export function getUnfinished(id) {
     const db = getDb();

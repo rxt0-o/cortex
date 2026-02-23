@@ -48,12 +48,12 @@ export function registerSessionTools(server) {
         }
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     });
-    server.tool('cortex_search', 'Full-text search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Returns results ranked by BM25 relevance across all entity types.', {
+    server.tool('cortex_search', 'Semantic search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Uses BM25 + embedding similarity with RRF-Fusion for best results.', {
         query: z.string().describe('Search query — supports FTS5 syntax (AND, OR, NOT, "phrase")'),
         limit: z.number().optional().describe('Max results to return (default: 15)'),
     }, async ({ query, limit }) => {
         getDb();
-        const results = search.searchAll(query, limit ?? 15);
+        const results = await search.searchAll(query, limit ?? 15);
         const formatted = search.formatResults(results);
         return { content: [{ type: 'text', text: formatted }] };
     });

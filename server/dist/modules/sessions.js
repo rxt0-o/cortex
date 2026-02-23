@@ -55,6 +55,10 @@ export function updateSession(id, input) {
         return getSession(id);
     values.push(id);
     db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    // Embed session when summary is set
+    if (input.summary) {
+        import('./embed-hooks.js').then(({ embedAsync }) => embedAsync('session', id, { summary: input.summary, key_changes: input.key_changes ? JSON.stringify(input.key_changes) : '' })).catch(() => { });
+    }
     return getSession(id);
 }
 export function listSessions(limit = 20, chainId) {

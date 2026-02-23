@@ -164,7 +164,13 @@ export function registerProfileTools(server: McpServer): void {
       entity_type ?? null,
       entity_id ?? null,
     );
-    return { content: [{ type: 'text' as const, text: `Note saved (id: ${r.lastInsertRowid})` }] };
+    // Fire-and-forget embedding
+    const noteId = Number(r.lastInsertRowid);
+    import('../modules/embed-hooks.js').then(({ embedAsync }) =>
+      embedAsync('note', noteId, { text })
+    ).catch(() => {});
+
+    return { content: [{ type: 'text' as const, text: `Note saved (id: ${noteId})` }] };
   });
 
   server.tool('cortex_list_notes', 'List notes, optionally filtered by search term', {

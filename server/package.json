@@ -6,11 +6,12 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && npm run bundle",
-    "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/bundle.js --external:node:*",
+    "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/bundle.js --external:node:* --external:@huggingface/transformers --external:onnxruntime-node",
     "dev": "tsc --watch",
     "start": "node dist/bundle.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {

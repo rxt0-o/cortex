@@ -127,11 +127,95 @@ export function searchBm25(query: string, limit = 15): SearchResult[] {
   return allResults.slice(0, limit);
 }
 
+const RRF_K = 60;
+
 /**
- * Default search — BM25 only. Will be extended with RRF in Phase 2.
+ * Unified search: BM25 + Embedding similarity via RRF-Fusion.
+ * Falls back to BM25-only when no embeddings are available.
  */
-export function searchAll(query: string, limit = 15): SearchResult[] {
-  return searchBm25(query, limit);
+export async function searchAll(query: string, limit = 15): Promise<SearchResult[]> {
+  const bm25Results = searchBm25(query, limit * 2);
+
+  // Try embedding search (best-effort)
+  let embResults: Array<{ entity_type: string; entity_id: string; score: number }> = [];
+  try {
+    const { findSimilar, isAvailable } = await import('./embeddings.js');
+    if (isAvailable()) {
+      embResults = await findSimilar(query, limit * 2);
+    }
+  } catch {
+    // No embeddings available — BM25 only
+  }
+
+  if (embResults.length === 0) {
+    return bm25Results.slice(0, limit);
+  }
+
+  // RRF Fusion
+  const rrfScores = new Map<string, { score: number; result?: SearchResult }>();
+
+  // BM25 scores
+  for (let rank = 0; rank < bm25Results.length; rank++) {
+    const r = bm25Results[rank];
+    const key = `${r.type}:${r.id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    rrfScores.set(key, { score: rrfScore, result: r });
+  }
+
+  // Embedding scores
+  for (let rank = 0; rank < embResults.length; rank++) {
+    const e = embResults[rank];
+    const key = `${e.entity_type}:${e.entity_id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    const existing = rrfScores.get(key);
+
+    if (existing) {
+      // Both BM25 + embedding matched — add scores
+      existing.score += rrfScore;
+    } else if (e.score > 0.4) {
+      // Embedding-only result with decent similarity — resolve from DB
+      const resolved = resolveEntity(e.entity_type, e.entity_id, query);
+      if (resolved) {
+        rrfScores.set(key, { score: rrfScore, result: resolved });
+      }
+    }
+  }
+
+  // Sort by RRF score
+  const fused = Array.from(rrfScores.values())
+    .filter((v) => v.result != null)
+    .map((v) => ({ ...v.result!, score: v.score }))
+    .sort((a, b) => b.score - a.score);
+
+  return fused.slice(0, limit);
+}
+
+/**
+ * Resolve an entity from the database for embedding-only results.
+ */
+function resolveEntity(entityType: string, entityId: string, query: string): SearchResult | null {
+  const db = getDb();
+  const cfg = FTS_CONFIGS.find((c) => c.type === entityType);
+  if (!cfg) return null;
+
+  try {
+    const row = db.prepare(
+      `SELECT * FROM ${cfg.sourceTable} WHERE ${cfg.joinColumn === 'rowid' ? 'rowid' : 'id'} = ?`
+    ).get(entityType === 'session' ? entityId : Number(entityId)) as any;
+    if (!row) return null;
+
+    return {
+      type: cfg.type,
+      id: row.id ?? entityId,
+      score: 0,
+      title: cfg.titleFn(row),
+      snippet: buildSnippet(row, cfg.snippetColumns, query),
+      created_at: row[cfg.createdAtColumn] ?? null,
+      metadata: cfg.metadataFn(row),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

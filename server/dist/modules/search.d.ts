@@ -25,9 +25,10 @@ export { FTS_CONFIGS };
  */
 export declare function searchBm25(query: string, limit?: number): SearchResult[];
 /**
- * Default search — BM25 only. Will be extended with RRF in Phase 2.
+ * Unified search: BM25 + Embedding similarity via RRF-Fusion.
+ * Falls back to BM25-only when no embeddings are available.
  */
-export declare function searchAll(query: string, limit?: number): SearchResult[];
+export declare function searchAll(query: string, limit?: number): Promise<SearchResult[]>;
 /**
  * Format search results for MCP tool output.
  */

@@ -61,7 +61,14 @@ export function addDecision(input: AddDecisionInput): AddDecisionResult {
     input.confidence ?? 'high'
   );
 
-  const decision = getDecision(Number(result.lastInsertRowid))!;
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Fire-and-forget embedding
+  import('./embed-hooks.js').then(({ embedAsync }) =>
+    embedAsync('decision', insertedId, { title: input.title, reasoning: input.reasoning })
+  ).catch(() => {});
+
+  const decision = getDecision(insertedId)!;
 
   if (similar.length > 0) {
     const top = similar[0];

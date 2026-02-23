@@ -4,6 +4,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -6794,6 +6797,370 @@ var require_dist = __commonJS({
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.default = formatsPlugin;
+  }
+});
+
+// dist/db.js
+import { DatabaseSync } from "node:sqlite";
+import path from "path";
+import fs from "fs";
+function getDbPath(projectDir) {
+  const dir = projectDir ?? process.cwd();
+  const claudeDir = path.join(dir, ".claude");
+  if (!fs.existsSync(claudeDir)) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+  }
+  return path.join(claudeDir, "cortex.db");
+}
+function getDb(projectDir) {
+  if (db)
+    return db;
+  const dbPath = getDbPath(projectDir);
+  db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("PRAGMA busy_timeout = 5000");
+  initSchema(db);
+  return db;
+}
+function initSchema(database) {
+  const versionRow = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").get();
+  if (!versionRow) {
+    database.exec(SCHEMA_SQL);
+    database.prepare("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
+    return;
+  }
+  const current = database.prepare("SELECT version FROM schema_version").get();
+  if (!current || current.version < SCHEMA_VERSION) {
+    if (!current || current.version < 2) {
+      const migrations = [
+        "ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0",
+        "ALTER TABLE decisions ADD COLUMN last_accessed TEXT",
+        "ALTER TABLE decisions ADD COLUMN archived_at TEXT",
+        "ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0",
+        "ALTER TABLE learnings ADD COLUMN last_accessed TEXT",
+        "ALTER TABLE learnings ADD COLUMN archived_at TEXT",
+        "ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0",
+        "ALTER TABLE errors ADD COLUMN last_accessed TEXT",
+        "ALTER TABLE errors ADD COLUMN archived_at TEXT"
+      ];
+      for (const sql of migrations) {
+        try {
+          database.exec(sql);
+        } catch {
+        }
+      }
+    }
+    database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
+  }
+}
+function closeDb() {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+function now() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function parseJson(value) {
+  if (value === null || value === void 0 || typeof value === "number")
+    return null;
+  if (typeof value !== "string")
+    return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+function toJson(value) {
+  if (value === null || value === void 0)
+    return null;
+  return JSON.stringify(value);
+}
+var db, SCHEMA_VERSION, SCHEMA_SQL;
+var init_db = __esm({
+  "dist/db.js"() {
+    "use strict";
+    db = null;
+    SCHEMA_VERSION = 3;
+    SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  duration_seconds INTEGER,
+  summary TEXT,
+  key_changes TEXT,
+  chain_id TEXT,
+  chain_label TEXT,
+  status TEXT DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT REFERENCES sessions(id),
+  created_at TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  reasoning TEXT NOT NULL,
+  alternatives TEXT,
+  files_affected TEXT,
+  superseded_by INTEGER REFERENCES decisions(id),
+  confidence TEXT DEFAULT 'high',
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS errors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT REFERENCES sessions(id),
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  occurrences INTEGER DEFAULT 1,
+  error_signature TEXT NOT NULL UNIQUE,
+  error_message TEXT NOT NULL,
+  root_cause TEXT,
+  fix_description TEXT,
+  fix_diff TEXT,
+  files_involved TEXT,
+  prevention_rule TEXT,
+  severity TEXT DEFAULT 'medium',
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS learnings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT REFERENCES sessions(id),
+  created_at TEXT NOT NULL,
+  anti_pattern TEXT NOT NULL,
+  correct_pattern TEXT NOT NULL,
+  detection_regex TEXT,
+  context TEXT NOT NULL,
+  severity TEXT DEFAULT 'medium',
+  occurrences INTEGER DEFAULT 1,
+  auto_block INTEGER DEFAULT 0,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS project_modules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  layer TEXT NOT NULL,
+  description TEXT,
+  entry_points TEXT,
+  conventions TEXT,
+  last_scanned TEXT,
+  last_changed TEXT
+);
+
+CREATE TABLE IF NOT EXISTS project_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL UNIQUE,
+  module_id INTEGER REFERENCES project_modules(id),
+  file_type TEXT,
+  description TEXT,
+  exports TEXT,
+  change_count INTEGER DEFAULT 0,
+  error_count INTEGER DEFAULT 0,
+  last_changed TEXT,
+  last_changed_session TEXT
+);
+
+CREATE TABLE IF NOT EXISTS dependencies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_file TEXT NOT NULL,
+  target_file TEXT NOT NULL,
+  import_type TEXT DEFAULT 'static',
+  symbols TEXT,
+  UNIQUE(source_file, target_file)
+);
+
+CREATE TABLE IF NOT EXISTS diffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT REFERENCES sessions(id),
+  file_path TEXT NOT NULL,
+  diff_content TEXT NOT NULL,
+  change_type TEXT,
+  lines_added INTEGER DEFAULT 0,
+  lines_removed INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conventions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  detection_pattern TEXT,
+  violation_pattern TEXT,
+  examples_good TEXT,
+  examples_bad TEXT,
+  scope TEXT,
+  source TEXT,
+  violation_count INTEGER DEFAULT 0,
+  last_violated TEXT
+);
+
+CREATE TABLE IF NOT EXISTS unfinished (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT REFERENCES sessions(id),
+  created_at TEXT NOT NULL,
+  description TEXT NOT NULL,
+  context TEXT,
+  priority TEXT DEFAULT 'medium',
+  resolved_at TEXT,
+  resolved_session TEXT
+);
+
+CREATE TABLE IF NOT EXISTS health_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL UNIQUE,
+  score INTEGER NOT NULL,
+  metrics TEXT NOT NULL,
+  trend TEXT
+);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+  version INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_chain_id ON sessions(chain_id);
+CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
+CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category);
+CREATE INDEX IF NOT EXISTS idx_errors_signature ON errors(error_signature);
+CREATE INDEX IF NOT EXISTS idx_errors_severity ON errors(severity);
+CREATE INDEX IF NOT EXISTS idx_learnings_auto_block ON learnings(auto_block);
+CREATE INDEX IF NOT EXISTS idx_project_files_module ON project_files(module_id);
+CREATE INDEX IF NOT EXISTS idx_project_files_path ON project_files(path);
+CREATE INDEX IF NOT EXISTS idx_dependencies_source ON dependencies(source_file);
+CREATE INDEX IF NOT EXISTS idx_dependencies_target ON dependencies(target_file);
+CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id);
+CREATE INDEX IF NOT EXISTS idx_diffs_file ON diffs(file_path);
+CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at);
+CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
+CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
+CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
+`;
+  }
+});
+
+// dist/modules/embeddings.js
+var embeddings_exports = {};
+__export(embeddings_exports, {
+  buildEmbeddingText: () => buildEmbeddingText,
+  cosineSimilarity: () => cosineSimilarity,
+  embed: () => embed,
+  findSimilar: () => findSimilar,
+  getAllEmbeddings: () => getAllEmbeddings,
+  isAvailable: () => isAvailable,
+  storeEmbedding: () => storeEmbedding
+});
+async function getPipeline() {
+  if (pipeline)
+    return pipeline;
+  const { pipeline: createPipeline } = await import("@huggingface/transformers");
+  pipeline = await createPipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+    dtype: "fp32"
+  });
+  return pipeline;
+}
+async function embed(text) {
+  const pipe2 = await getPipeline();
+  const output = await pipe2(text, { pooling: "mean", normalize: true });
+  return new Float32Array(output.data);
+}
+function cosineSimilarity(a, b) {
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+  }
+  return dot;
+}
+function storeEmbedding(entityType, entityId, embedding, model = "all-MiniLM-L6-v2") {
+  const db2 = getDb();
+  const blob = Buffer.from(embedding.buffer);
+  db2.prepare(`
+    INSERT OR REPLACE INTO embeddings (entity_type, entity_id, embedding, model, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `).run(entityType, String(entityId), blob, model);
+}
+function getAllEmbeddings() {
+  const db2 = getDb();
+  try {
+    const rows = db2.prepare("SELECT entity_type, entity_id, embedding FROM embeddings").all();
+    return rows.map((r) => ({
+      entity_type: r.entity_type,
+      entity_id: r.entity_id,
+      embedding: new Float32Array(new Uint8Array(r.embedding).buffer)
+    }));
+  } catch {
+    return [];
+  }
+}
+async function findSimilar(queryText, limit = 15) {
+  const queryEmb = await embed(queryText);
+  const all = getAllEmbeddings();
+  const scored = all.map((row) => ({
+    entity_type: row.entity_type,
+    entity_id: row.entity_id,
+    score: cosineSimilarity(queryEmb, row.embedding)
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+function buildEmbeddingText(fields) {
+  const parts = [];
+  for (const [, value] of Object.entries(fields)) {
+    if (value && typeof value === "string") {
+      parts.push(value);
+    }
+  }
+  return parts.join(" ").slice(0, 512);
+}
+function isAvailable() {
+  const db2 = getDb();
+  try {
+    const row = db2.prepare("SELECT COUNT(*) as c FROM embeddings").get();
+    return row.c > 0;
+  } catch {
+    return false;
+  }
+}
+var pipeline;
+var init_embeddings = __esm({
+  "dist/modules/embeddings.js"() {
+    "use strict";
+    init_db();
+    pipeline = null;
+  }
+});
+
+// dist/modules/embed-hooks.js
+var embed_hooks_exports = {};
+__export(embed_hooks_exports, {
+  embedAsync: () => embedAsync
+});
+function embedAsync(entityType, entityId, fields) {
+  const text = buildEmbeddingText(fields);
+  if (!text || text.length < 10)
+    return;
+  embed(text).then((vec) => storeEmbedding(entityType, entityId, vec)).catch(() => {
+  });
+}
+var init_embed_hooks = __esm({
+  "dist/modules/embed-hooks.js"() {
+    "use strict";
+    init_embeddings();
   }
 });
 
@@ -29946,255 +30313,14 @@ var StdioServerTransport = class {
   }
 };
 
-// dist/db.js
-import { DatabaseSync } from "node:sqlite";
-import path from "path";
-import fs from "fs";
-var db = null;
-var SCHEMA_VERSION = 2;
-var SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
-  duration_seconds INTEGER,
-  summary TEXT,
-  key_changes TEXT,
-  chain_id TEXT,
-  chain_label TEXT,
-  status TEXT DEFAULT 'active'
-);
+// dist/index.js
+init_db();
 
-CREATE TABLE IF NOT EXISTS decisions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT REFERENCES sessions(id),
-  created_at TEXT NOT NULL,
-  category TEXT NOT NULL,
-  title TEXT NOT NULL,
-  reasoning TEXT NOT NULL,
-  alternatives TEXT,
-  files_affected TEXT,
-  superseded_by INTEGER REFERENCES decisions(id),
-  confidence TEXT DEFAULT 'high',
-  access_count INTEGER DEFAULT 0,
-  last_accessed TEXT,
-  archived_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS errors (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT REFERENCES sessions(id),
-  first_seen TEXT NOT NULL,
-  last_seen TEXT NOT NULL,
-  occurrences INTEGER DEFAULT 1,
-  error_signature TEXT NOT NULL UNIQUE,
-  error_message TEXT NOT NULL,
-  root_cause TEXT,
-  fix_description TEXT,
-  fix_diff TEXT,
-  files_involved TEXT,
-  prevention_rule TEXT,
-  severity TEXT DEFAULT 'medium',
-  access_count INTEGER DEFAULT 0,
-  last_accessed TEXT,
-  archived_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS learnings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT REFERENCES sessions(id),
-  created_at TEXT NOT NULL,
-  anti_pattern TEXT NOT NULL,
-  correct_pattern TEXT NOT NULL,
-  detection_regex TEXT,
-  context TEXT NOT NULL,
-  severity TEXT DEFAULT 'medium',
-  occurrences INTEGER DEFAULT 1,
-  auto_block INTEGER DEFAULT 0,
-  access_count INTEGER DEFAULT 0,
-  last_accessed TEXT,
-  archived_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS project_modules (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  path TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  layer TEXT NOT NULL,
-  description TEXT,
-  entry_points TEXT,
-  conventions TEXT,
-  last_scanned TEXT,
-  last_changed TEXT
-);
-
-CREATE TABLE IF NOT EXISTS project_files (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  path TEXT NOT NULL UNIQUE,
-  module_id INTEGER REFERENCES project_modules(id),
-  file_type TEXT,
-  description TEXT,
-  exports TEXT,
-  change_count INTEGER DEFAULT 0,
-  error_count INTEGER DEFAULT 0,
-  last_changed TEXT,
-  last_changed_session TEXT
-);
-
-CREATE TABLE IF NOT EXISTS dependencies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_file TEXT NOT NULL,
-  target_file TEXT NOT NULL,
-  import_type TEXT DEFAULT 'static',
-  symbols TEXT,
-  UNIQUE(source_file, target_file)
-);
-
-CREATE TABLE IF NOT EXISTS diffs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT REFERENCES sessions(id),
-  file_path TEXT NOT NULL,
-  diff_content TEXT NOT NULL,
-  change_type TEXT,
-  lines_added INTEGER DEFAULT 0,
-  lines_removed INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS conventions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT NOT NULL,
-  detection_pattern TEXT,
-  violation_pattern TEXT,
-  examples_good TEXT,
-  examples_bad TEXT,
-  scope TEXT,
-  source TEXT,
-  violation_count INTEGER DEFAULT 0,
-  last_violated TEXT
-);
-
-CREATE TABLE IF NOT EXISTS unfinished (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT REFERENCES sessions(id),
-  created_at TEXT NOT NULL,
-  description TEXT NOT NULL,
-  context TEXT,
-  priority TEXT DEFAULT 'medium',
-  resolved_at TEXT,
-  resolved_session TEXT
-);
-
-CREATE TABLE IF NOT EXISTS health_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  date TEXT NOT NULL UNIQUE,
-  score INTEGER NOT NULL,
-  metrics TEXT NOT NULL,
-  trend TEXT
-);
-
-CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_chain_id ON sessions(chain_id);
-CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
-CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category);
-CREATE INDEX IF NOT EXISTS idx_errors_signature ON errors(error_signature);
-CREATE INDEX IF NOT EXISTS idx_errors_severity ON errors(severity);
-CREATE INDEX IF NOT EXISTS idx_learnings_auto_block ON learnings(auto_block);
-CREATE INDEX IF NOT EXISTS idx_project_files_module ON project_files(module_id);
-CREATE INDEX IF NOT EXISTS idx_project_files_path ON project_files(path);
-CREATE INDEX IF NOT EXISTS idx_dependencies_source ON dependencies(source_file);
-CREATE INDEX IF NOT EXISTS idx_dependencies_target ON dependencies(target_file);
-CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id);
-CREATE INDEX IF NOT EXISTS idx_diffs_file ON diffs(file_path);
-CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at);
-CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
-CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
-CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
-`;
-function getDbPath(projectDir) {
-  const dir = projectDir ?? process.cwd();
-  const claudeDir = path.join(dir, ".claude");
-  if (!fs.existsSync(claudeDir)) {
-    fs.mkdirSync(claudeDir, { recursive: true });
-  }
-  return path.join(claudeDir, "cortex.db");
-}
-function getDb(projectDir) {
-  if (db)
-    return db;
-  const dbPath = getDbPath(projectDir);
-  db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA busy_timeout = 5000");
-  initSchema(db);
-  return db;
-}
-function initSchema(database) {
-  const versionRow = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").get();
-  if (!versionRow) {
-    database.exec(SCHEMA_SQL);
-    database.prepare("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
-    return;
-  }
-  const current = database.prepare("SELECT version FROM schema_version").get();
-  if (!current || current.version < SCHEMA_VERSION) {
-    if (!current || current.version < 2) {
-      const migrations = [
-        "ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE decisions ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE decisions ADD COLUMN archived_at TEXT",
-        "ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE learnings ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE learnings ADD COLUMN archived_at TEXT",
-        "ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE errors ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE errors ADD COLUMN archived_at TEXT"
-      ];
-      for (const sql of migrations) {
-        try {
-          database.exec(sql);
-        } catch {
-        }
-      }
-    }
-    database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
-  }
-}
-function closeDb() {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}
-function now() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-function parseJson(value) {
-  if (value === null || value === void 0 || typeof value === "number")
-    return null;
-  if (typeof value !== "string")
-    return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-function toJson(value) {
-  if (value === null || value === void 0)
-    return null;
-  return JSON.stringify(value);
-}
+// dist/tools/sessions.js
+init_db();
 
 // dist/modules/sessions.js
+init_db();
 function createSession(input) {
   const db2 = getDb();
   const startedAt = input.started_at ?? now();
@@ -30251,6 +30377,10 @@ function updateSession(id, input) {
     return getSession(id);
   values.push(id);
   db2.prepare(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  if (input.summary) {
+    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("session", id, { summary: input.summary, key_changes: input.key_changes ? JSON.stringify(input.key_changes) : "" })).catch(() => {
+    });
+  }
   return getSession(id);
 }
 function listSessions(limit = 20, chainId) {
@@ -30281,6 +30411,7 @@ function getRecentSummaries(limit = 3) {
 }
 
 // dist/modules/errors.js
+init_db();
 import { createHash } from "crypto";
 function createErrorSignature(message) {
   const normalized = message.replace(/\d+/g, "N").replace(/\/[\w./\-]+/g, "PATH").replace(/0x[a-fA-F0-9]+/g, "HEX").replace(/\s+/g, " ").trim().toLowerCase();
@@ -30311,7 +30442,10 @@ function addError(input) {
       root_cause, fix_description, fix_diff, files_involved, prevention_rule, severity)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, timestamp, timestamp, signature, input.error_message, input.root_cause ?? null, input.fix_description ?? null, input.fix_diff ?? null, toJson(input.files_involved), input.prevention_rule ?? null, input.severity ?? "medium");
-  return getError(Number(result.lastInsertRowid));
+  const insertedId = Number(result.lastInsertRowid);
+  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("error", insertedId, { error_message: input.error_message, root_cause: input.root_cause, fix_description: input.fix_description })).catch(() => {
+  });
+  return getError(insertedId);
 }
 function getError(id) {
   const db2 = getDb();
@@ -30428,6 +30562,9 @@ function getPreventionRules() {
   `).all();
 }
 
+// dist/modules/learnings.js
+init_db();
+
 // dist/utils/similarity.js
 var STOPWORDS = /* @__PURE__ */ new Set([
   "a",
@@ -30505,7 +30642,7 @@ function computeTF(tokens) {
     tf.set(k, v / total);
   return tf;
 }
-function cosineSimilarity(a, b) {
+function cosineSimilarity2(a, b) {
   let dot = 0, normA = 0, normB = 0;
   for (const [k, v] of a) {
     dot += v * (b.get(k) ?? 0);
@@ -30517,7 +30654,7 @@ function cosineSimilarity(a, b) {
     return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
-function findSimilar(query, corpus, threshold = (() => {
+function findSimilar2(query, corpus, threshold = (() => {
   const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? "0.85");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85;
 })()) {
@@ -30542,7 +30679,7 @@ function findSimilar(query, corpus, threshold = (() => {
   const queryVec = tfidfVec(queryTokens);
   const results = [];
   for (const entry of corpus) {
-    const score = cosineSimilarity(queryVec, tfidfVec(tokenize(entry.text)));
+    const score = cosineSimilarity2(queryVec, tfidfVec(tokenize(entry.text)));
     if (score >= threshold)
       results.push({ id: entry.id, score });
   }
@@ -30554,7 +30691,7 @@ function addLearning(input) {
   const db2 = getDb();
   const existing = db2.prepare("SELECT id, anti_pattern, correct_pattern FROM learnings WHERE archived_at IS NULL LIMIT 500").all();
   const corpus = existing.map((e) => ({ id: e.id, text: e.anti_pattern + " " + e.correct_pattern }));
-  const similar = findSimilar(input.anti_pattern + " " + input.correct_pattern, corpus);
+  const similar = findSimilar2(input.anti_pattern + " " + input.correct_pattern, corpus);
   const result = db2.prepare(`
     INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
@@ -30562,7 +30699,10 @@ function addLearning(input) {
   if (input.severity === "high") {
     db2.prepare("UPDATE learnings SET shared = 1 WHERE id = ?").run(Number(result.lastInsertRowid));
   }
-  const learning = getLearning(Number(result.lastInsertRowid));
+  const insertedId = Number(result.lastInsertRowid);
+  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("learning", insertedId, { anti_pattern: input.anti_pattern, correct_pattern: input.correct_pattern, context: input.context })).catch(() => {
+  });
+  const learning = getLearning(insertedId);
   if (similar.length > 0) {
     const top = similar[0];
     const topEntry = existing.find((e) => e.id === top.id);
@@ -30693,13 +30833,17 @@ function runLearningsPruning() {
 }
 
 // dist/modules/unfinished.js
+init_db();
 function addUnfinished(input) {
   const db2 = getDb();
   const result = db2.prepare(`
     INSERT INTO unfinished (session_id, created_at, description, context, priority)
     VALUES (?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.description, input.context ?? null, input.priority ?? "medium");
-  return getUnfinished(Number(result.lastInsertRowid));
+  const insertedId = Number(result.lastInsertRowid);
+  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("todo", insertedId, { description: input.description, context: input.context })).catch(() => {
+  });
+  return getUnfinished(insertedId);
 }
 function getUnfinished(id) {
   const db2 = getDb();
@@ -30725,6 +30869,7 @@ function resolveUnfinished(id, resolvedSession) {
 }
 
 // dist/modules/health.js
+init_db();
 function calculateHealth() {
   const db2 = getDb();
   const openErrors = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL").get().count;
@@ -30777,6 +30922,7 @@ function getHealthHistory(limit = 30) {
 }
 
 // dist/modules/project-map.js
+init_db();
 import fs2 from "fs";
 import path2 from "path";
 function upsertModule(input) {
@@ -31021,6 +31167,7 @@ function extractImports(content, ext) {
 }
 
 // dist/modules/search.js
+init_db();
 var FTS_CONFIGS = [
   {
     type: "learning",
@@ -31114,8 +31261,65 @@ function searchBm25(query, limit = 15) {
   allResults.sort((a, b) => b.score - a.score);
   return allResults.slice(0, limit);
 }
-function searchAll(query, limit = 15) {
-  return searchBm25(query, limit);
+var RRF_K = 60;
+async function searchAll(query, limit = 15) {
+  const bm25Results = searchBm25(query, limit * 2);
+  let embResults = [];
+  try {
+    const { findSimilar: findSimilar3, isAvailable: isAvailable2 } = await Promise.resolve().then(() => (init_embeddings(), embeddings_exports));
+    if (isAvailable2()) {
+      embResults = await findSimilar3(query, limit * 2);
+    }
+  } catch {
+  }
+  if (embResults.length === 0) {
+    return bm25Results.slice(0, limit);
+  }
+  const rrfScores = /* @__PURE__ */ new Map();
+  for (let rank = 0; rank < bm25Results.length; rank++) {
+    const r = bm25Results[rank];
+    const key = `${r.type}:${r.id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    rrfScores.set(key, { score: rrfScore, result: r });
+  }
+  for (let rank = 0; rank < embResults.length; rank++) {
+    const e = embResults[rank];
+    const key = `${e.entity_type}:${e.entity_id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    const existing = rrfScores.get(key);
+    if (existing) {
+      existing.score += rrfScore;
+    } else if (e.score > 0.4) {
+      const resolved = resolveEntity(e.entity_type, e.entity_id, query);
+      if (resolved) {
+        rrfScores.set(key, { score: rrfScore, result: resolved });
+      }
+    }
+  }
+  const fused = Array.from(rrfScores.values()).filter((v) => v.result != null).map((v) => ({ ...v.result, score: v.score })).sort((a, b) => b.score - a.score);
+  return fused.slice(0, limit);
+}
+function resolveEntity(entityType, entityId, query) {
+  const db2 = getDb();
+  const cfg = FTS_CONFIGS.find((c) => c.type === entityType);
+  if (!cfg)
+    return null;
+  try {
+    const row = db2.prepare(`SELECT * FROM ${cfg.sourceTable} WHERE ${cfg.joinColumn === "rowid" ? "rowid" : "id"} = ?`).get(entityType === "session" ? entityId : Number(entityId));
+    if (!row)
+      return null;
+    return {
+      type: cfg.type,
+      id: row.id ?? entityId,
+      score: 0,
+      title: cfg.titleFn(row),
+      snippet: buildSnippet(row, cfg.snippetColumns, query),
+      created_at: row[cfg.createdAtColumn] ?? null,
+      metadata: cfg.metadataFn(row)
+    };
+  } catch {
+    return null;
+  }
 }
 function buildSnippet(row, columns, query) {
   const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -31192,16 +31396,20 @@ function formatMeta(r) {
 }
 
 // dist/modules/decisions.js
+init_db();
 function addDecision(input) {
   const db2 = getDb();
   const existing = db2.prepare("SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200").all();
   const corpus = existing.map((e) => ({ id: e.id, text: e.title + " " + e.reasoning }));
-  const similar = findSimilar(input.title + " " + input.reasoning, corpus);
+  const similar = findSimilar2(input.title + " " + input.reasoning, corpus);
   const result = db2.prepare(`
     INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? "high");
-  const decision = getDecision(Number(result.lastInsertRowid));
+  const insertedId = Number(result.lastInsertRowid);
+  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("decision", insertedId, { title: input.title, reasoning: input.reasoning })).catch(() => {
+  });
+  const decision = getDecision(insertedId);
   if (similar.length > 0) {
     const top = similar[0];
     const topEntry = existing.find((e) => e.id === top.id);
@@ -31335,12 +31543,12 @@ function registerSessionTools(server2) {
     }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
-  server2.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Returns results ranked by BM25 relevance across all entity types.", {
+  server2.tool("cortex_search", "Semantic search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Uses BM25 + embedding similarity with RRF-Fusion for best results.", {
     query: external_exports3.string().describe('Search query \u2014 supports FTS5 syntax (AND, OR, NOT, "phrase")'),
     limit: external_exports3.number().optional().describe("Max results to return (default: 15)")
   }, async ({ query, limit }) => {
     getDb();
-    const results = searchAll(query, limit ?? 15);
+    const results = await searchAll(query, limit ?? 15);
     const formatted = formatResults(results);
     return { content: [{ type: "text", text: formatted }] };
   });
@@ -31362,6 +31570,7 @@ function registerSessionTools(server2) {
 }
 
 // dist/tools/decisions.js
+init_db();
 function registerDecisionTools(server2) {
   server2.tool("cortex_add_decision", "Log an architectural or design decision with reasoning", {
     title: external_exports3.string().describe('Short title of the decision. Example: "Use SQLite for local persistence" or "Adopt BM25/FTS5 for full-text search"'),
@@ -31404,6 +31613,7 @@ function registerDecisionTools(server2) {
 }
 
 // dist/tools/errors.js
+init_db();
 function registerErrorTools(server2) {
   server2.tool("cortex_add_error", "Record an error with optional root cause, fix, and prevention rule", {
     error_message: external_exports3.string().describe(`The error that occurred. Example: "TypeError: Cannot read property 'id' of undefined in sessions.updateSession" or "FTS5 table not found: learnings_fts"`),
@@ -31462,7 +31672,11 @@ function registerErrorTools(server2) {
   });
 }
 
+// dist/tools/learnings.js
+init_db();
+
 // dist/modules/conventions.js
+init_db();
 function addConvention(input) {
   const db2 = getDb();
   db2.prepare(`
@@ -31642,7 +31856,11 @@ function registerLearningTools(server2) {
   });
 }
 
+// dist/tools/project-map.js
+init_db();
+
 // dist/modules/dependencies.js
+init_db();
 function getImports(filePath) {
   const db2 = getDb();
   const rows = db2.prepare("SELECT * FROM dependencies WHERE source_file = ?").all(filePath);
@@ -31679,6 +31897,7 @@ function getImpactTree(filePath, maxDepth = 3) {
 }
 
 // dist/modules/diffs.js
+init_db();
 function getDiffsForFile(filePath, limit = 20) {
   const db2 = getDb();
   return db2.prepare(`
@@ -31845,6 +32064,7 @@ function registerProjectMapTools(server2) {
 }
 
 // dist/tools/tracking.js
+init_db();
 function registerTrackingTools(server2) {
   server2.tool("cortex_get_unfinished", "Get open/unresolved items \u2014 things that were started but not completed", {}, async () => {
     getDb();
@@ -31900,6 +32120,9 @@ function registerTrackingTools(server2) {
     return { content: [{ type: "text", text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
   });
 }
+
+// dist/tools/intelligence.js
+init_db();
 
 // dist/analyzer/diff-extractor.js
 function parseDiff(diffText) {
@@ -32340,6 +32563,7 @@ ${unique.join("\n")}` : "No similar sessions found." }] };
 }
 
 // dist/tools/stats.js
+init_db();
 function registerStatsTools(server2) {
   server2.tool("cortex_get_health", "Get project health score with metrics and trend", {}, async () => {
     const db2 = getDb();
@@ -32538,6 +32762,55 @@ function registerStatsTools(server2) {
       return { content: [{ type: "text", text: `Error: ${e}` }] };
     }
   });
+  server2.tool("cortex_backfill_embeddings", "Generate embeddings for all existing entities that don't have one yet", {}, async () => {
+    const db2 = getDb();
+    const { embed: embed2, storeEmbedding: storeEmbedding2, buildEmbeddingText: buildEmbeddingText2 } = await Promise.resolve().then(() => (init_embeddings(), embeddings_exports));
+    const configs = [
+      { type: "learning", table: "learnings", idCol: "id", fields: ["anti_pattern", "correct_pattern", "context"] },
+      { type: "decision", table: "decisions", idCol: "id", fields: ["title", "reasoning"] },
+      { type: "error", table: "errors", idCol: "id", fields: ["error_message", "root_cause", "fix_description"] },
+      { type: "note", table: "notes", idCol: "id", fields: ["text"] },
+      { type: "session", table: "sessions", idCol: "id", fields: ["summary", "key_changes"] },
+      { type: "todo", table: "unfinished", idCol: "id", fields: ["description", "context"] }
+    ];
+    let generated = 0;
+    let skipped = 0;
+    let errCount = 0;
+    for (const cfg of configs) {
+      try {
+        const rows = db2.prepare(`
+            SELECT s.* FROM ${cfg.table} s
+            LEFT JOIN embeddings e ON e.entity_type = ? AND e.entity_id = CAST(s.${cfg.idCol} AS TEXT)
+            WHERE e.id IS NULL
+          `).all(cfg.type);
+        for (const row of rows) {
+          try {
+            const fieldMap = {};
+            for (const f of cfg.fields)
+              fieldMap[f] = row[f];
+            const text = buildEmbeddingText2(fieldMap);
+            if (!text || text.length < 10) {
+              skipped++;
+              continue;
+            }
+            const vec = await embed2(text);
+            storeEmbedding2(cfg.type, String(row[cfg.idCol]), vec);
+            generated++;
+          } catch {
+            errCount++;
+          }
+        }
+      } catch {
+        errCount++;
+      }
+    }
+    return {
+      content: [{
+        type: "text",
+        text: `Backfill complete: ${generated} embeddings generated, ${skipped} skipped (too short), ${errCount} errors.`
+      }]
+    };
+  });
   server2.tool("cortex_agent_status", "Show daemon agent run history with success rates and errors", {
     limit: external_exports3.number().optional().default(20).describe("Max number of agent runs to return. input_examples: [10, 50]"),
     agent_name: external_exports3.string().optional().describe('Filter by agent name (learner, architect, context, etc.). input_examples: ["learner", "architect"]')
@@ -32569,6 +32842,7 @@ function registerStatsTools(server2) {
 }
 
 // dist/tools/profile.js
+init_db();
 function registerProfileTools(server2) {
   server2.tool("cortex_update_profile", "Update user profile (name, role, working style, expertise, communication preference)", {
     name: external_exports3.string().optional(),
@@ -32697,7 +32971,10 @@ function registerProfileTools(server2) {
     entity_id: external_exports3.number().optional().describe("ID of the linked entity. Example: 42")
   }, async ({ text, tags, session_id, entity_type, entity_id }) => {
     const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null, entity_type ?? null, entity_id ?? null);
-    return { content: [{ type: "text", text: `Note saved (id: ${r.lastInsertRowid})` }] };
+    const noteId = Number(r.lastInsertRowid);
+    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("note", noteId, { text })).catch(() => {
+    });
+    return { content: [{ type: "text", text: `Note saved (id: ${noteId})` }] };
   });
   server2.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
     limit: external_exports3.number().optional().default(20),
@@ -32783,6 +33060,9 @@ function registerProfileTools(server2) {
     return { content: [{ type: "text", text: JSON.stringify(conv, null, 2) }] };
   });
 }
+
+// dist/tools/meta.js
+init_db();
 
 // dist/modules/tool-registry.js
 var TOOL_CATEGORIES = {
@@ -32904,6 +33184,7 @@ function registerMetaTools(server2) {
 }
 
 // dist/modules/activity.js
+init_db();
 function logActivity(entry) {
   const db2 = getDb();
   const r = db2.prepare(`
