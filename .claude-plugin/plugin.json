@@ -1,7 +1,7 @@
 {
   "name": "cortex",
   "description": "Persistent memory and autonomous intelligence for Claude Code — remembers sessions, learns from mistakes, maps architecture, and explains files in real-time.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {
     "name": "rxt0-o",
     "url": "https://github.com/rxt0-o"
