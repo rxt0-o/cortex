@@ -6,6 +6,7 @@ import * as learnings from '../modules/learnings.js';
 import * as unfinished from '../modules/unfinished.js';
 import * as health from '../modules/health.js';
 import * as projectMap from '../modules/project-map.js';
+import * as search from '../modules/search.js';
 import { runAllPruning } from '../helpers.js';
 export function registerSessionTools(server) {
     server.tool('cortex_save_session', 'Save or update a session with summary, changes, decisions, errors, and learnings', {
@@ -47,38 +48,14 @@ export function registerSessionTools(server) {
         }
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     });
-    server.tool('cortex_search', 'Full-text search across all Cortex data: sessions, decisions, errors, learnings', {
-        query: z.string(),
-        limit: z.number().optional(),
+    server.tool('cortex_search', 'Full-text search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Returns results ranked by BM25 relevance across all entity types.', {
+        query: z.string().describe('Search query — supports FTS5 syntax (AND, OR, NOT, "phrase")'),
+        limit: z.number().optional().describe('Max results to return (default: 15)'),
     }, async ({ query, limit }) => {
-        const db = getDb();
-        const maxResults = limit ?? 10;
-        const lines = [];
-        function ftsSearch(ftsTable, labelFn, prefix) {
-            try {
-                const rows = db.prepare('SELECT rowid, * FROM ' + ftsTable + ' WHERE ' + ftsTable + ' MATCH ? ORDER BY bm25(' + ftsTable + ') LIMIT ?').all(query, maxResults);
-                for (const r of rows)
-                    lines.push(prefix + ' ' + labelFn(r));
-            }
-            catch { }
-        }
-        ftsSearch('learnings_fts', r => r.anti_pattern, '[LEARNING]');
-        ftsSearch('decisions_fts', r => r.title, '[DECISION]');
-        ftsSearch('errors_fts', r => r.error_message, '[ERROR]');
-        ftsSearch('notes_fts', r => String(r.text).slice(0, 120), '[NOTE]');
-        try {
-            const sr = db.prepare("SELECT summary FROM sessions WHERE summary LIKE ? AND status != 'active' ORDER BY started_at DESC LIMIT ?").all('%' + query + '%', maxResults);
-            for (const s of sr)
-                lines.push('[SESSION] ' + s.summary);
-        }
-        catch { }
-        try {
-            const ur = db.prepare('SELECT description FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?').all('%' + query + '%', maxResults);
-            for (const u of ur)
-                lines.push('[TODO] ' + u.description);
-        }
-        catch { }
-        return { content: [{ type: 'text', text: lines.join('\n') || 'No results.' }] };
+        getDb();
+        const results = search.searchAll(query, limit ?? 15);
+        const formatted = search.formatResults(results);
+        return { content: [{ type: 'text', text: formatted }] };
     });
     server.tool('cortex_get_context', 'Get relevant context for specific files or the current work', {
         files: z.array(z.string()).optional(),

@@ -149,6 +149,12 @@ export function openDb(cwd) {
     `CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN INSERT INTO decisions_fts(rowid, title, reasoning) VALUES (new.id, new.title, new.reasoning); END`,
     `CREATE TRIGGER IF NOT EXISTS errors_ai AFTER INSERT ON errors BEGIN INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description) VALUES (new.id, new.error_message, new.root_cause, new.fix_description); END`,
     `CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid, text) VALUES (new.id, new.text); END`,
+    // Sessions + Unfinished FTS
+    `CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(summary, key_changes, content='sessions', content_rowid='rowid')`,
+    `CREATE VIRTUAL TABLE IF NOT EXISTS unfinished_fts USING fts5(description, context, content='unfinished', content_rowid='id')`,
+    `CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN INSERT INTO sessions_fts(rowid, summary, key_changes) VALUES (new.rowid, COALESCE(new.summary,''), COALESCE(new.key_changes,'')); END`,
+    `CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF summary, key_changes ON sessions BEGIN UPDATE sessions_fts SET summary = COALESCE(new.summary,''), key_changes = COALESCE(new.key_changes,'') WHERE rowid = old.rowid; END`,
+    `CREATE TRIGGER IF NOT EXISTS unfinished_ai AFTER INSERT ON unfinished BEGIN INSERT INTO unfinished_fts(rowid, description, context) VALUES (new.id, new.description, COALESCE(new.context,'')); END`,
     // entity-links fuer notes + activity_log
     `ALTER TABLE notes ADD COLUMN entity_type TEXT`,
     `ALTER TABLE notes ADD COLUMN entity_id INTEGER`,
@@ -222,6 +228,20 @@ export function openDb(cwd) {
       db.prepare('INSERT INTO notes_fts(rowid, text) SELECT id, text FROM notes').run();
     }
   } catch { /* FTS-Tabellen noch nicht vorhanden oder bereits befuellt */ }
+
+  // Sessions + Unfinished FTS Backfill
+  try {
+    const sftsCount = db.prepare('SELECT COUNT(*) as c FROM sessions_fts').get()?.c ?? 0;
+    if (sftsCount === 0) {
+      db.prepare("INSERT INTO sessions_fts(rowid, summary, key_changes) SELECT rowid, COALESCE(summary,''), COALESCE(key_changes,'') FROM sessions WHERE status != 'active'").run();
+    }
+  } catch {}
+  try {
+    const uftsCount = db.prepare('SELECT COUNT(*) as c FROM unfinished_fts').get()?.c ?? 0;
+    if (uftsCount === 0) {
+      db.prepare("INSERT INTO unfinished_fts(rowid, description, context) SELECT id, description, COALESCE(context,'') FROM unfinished WHERE resolved_at IS NULL").run();
+    }
+  } catch {}
 
   return db;
 }

@@ -31020,6 +31020,177 @@ function extractImports(content, ext) {
   return imports;
 }
 
+// dist/modules/search.js
+var FTS_CONFIGS = [
+  {
+    type: "learning",
+    ftsTable: "learnings_fts",
+    sourceTable: "learnings",
+    joinColumn: "id",
+    titleFn: (r) => r.anti_pattern,
+    snippetColumns: ["anti_pattern", "correct_pattern", "context"],
+    metadataFn: (r) => ({ severity: r.severity, auto_block: Boolean(r.auto_block) }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "decision",
+    ftsTable: "decisions_fts",
+    sourceTable: "decisions",
+    joinColumn: "id",
+    titleFn: (r) => r.title,
+    snippetColumns: ["title", "reasoning"],
+    metadataFn: (r) => ({ category: r.category, confidence: r.confidence }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "error",
+    ftsTable: "errors_fts",
+    sourceTable: "errors",
+    joinColumn: "id",
+    titleFn: (r) => r.error_message,
+    snippetColumns: ["error_message", "root_cause", "fix_description"],
+    metadataFn: (r) => ({ severity: r.severity, occurrences: r.occurrences }),
+    createdAtColumn: "first_seen"
+  },
+  {
+    type: "note",
+    ftsTable: "notes_fts",
+    sourceTable: "notes",
+    joinColumn: "id",
+    titleFn: (r) => String(r.text).slice(0, 80),
+    snippetColumns: ["text"],
+    metadataFn: (r) => ({ tags: r.tags }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "session",
+    ftsTable: "sessions_fts",
+    sourceTable: "sessions",
+    joinColumn: "rowid",
+    titleFn: (r) => r.summary ? String(r.summary).slice(0, 80) : r.id,
+    snippetColumns: ["summary", "key_changes"],
+    metadataFn: (r) => ({ status: r.status }),
+    createdAtColumn: "started_at"
+  },
+  {
+    type: "todo",
+    ftsTable: "unfinished_fts",
+    sourceTable: "unfinished",
+    joinColumn: "id",
+    titleFn: (r) => String(r.description).slice(0, 80),
+    snippetColumns: ["description", "context"],
+    metadataFn: (r) => ({ priority: r.priority }),
+    createdAtColumn: "created_at"
+  }
+];
+function searchBm25(query, limit = 15) {
+  const db2 = getDb();
+  const allResults = [];
+  for (const cfg of FTS_CONFIGS) {
+    try {
+      const rows = db2.prepare(`
+        SELECT s.*, bm25(${cfg.ftsTable}) as bm25_score
+        FROM ${cfg.sourceTable} s
+        JOIN ${cfg.ftsTable} fts ON s.${cfg.joinColumn} = fts.rowid
+        WHERE ${cfg.ftsTable} MATCH ?
+        ORDER BY bm25(${cfg.ftsTable})
+        LIMIT ?
+      `).all(query, limit);
+      for (const row of rows) {
+        allResults.push({
+          type: cfg.type,
+          id: row.id,
+          score: -row.bm25_score,
+          // flip to positive (higher = better)
+          title: cfg.titleFn(row),
+          snippet: buildSnippet(row, cfg.snippetColumns, query),
+          created_at: row[cfg.createdAtColumn] ?? null,
+          metadata: cfg.metadataFn(row)
+        });
+      }
+    } catch {
+    }
+  }
+  allResults.sort((a, b) => b.score - a.score);
+  return allResults.slice(0, limit);
+}
+function searchAll(query, limit = 15) {
+  return searchBm25(query, limit);
+}
+function buildSnippet(row, columns, query) {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  let bestSnippet = "";
+  let bestScore = -1;
+  for (const col of columns) {
+    const value = row[col];
+    if (!value || typeof value !== "string")
+      continue;
+    const lower = value.toLowerCase();
+    const matchCount = queryTerms.filter((t) => lower.includes(t)).length;
+    if (matchCount > bestScore) {
+      bestScore = matchCount;
+      bestSnippet = extractContext(value, queryTerms, 150);
+    }
+  }
+  return bestSnippet || "(no snippet)";
+}
+function extractContext(text, terms, maxLen) {
+  const lower = text.toLowerCase();
+  let firstMatch = text.length;
+  for (const t of terms) {
+    const idx = lower.indexOf(t);
+    if (idx >= 0 && idx < firstMatch)
+      firstMatch = idx;
+  }
+  if (firstMatch === text.length) {
+    return text.length <= maxLen ? text : text.slice(0, maxLen) + "...";
+  }
+  const start = Math.max(0, firstMatch - 30);
+  const end = Math.min(text.length, start + maxLen);
+  let snippet = text.slice(start, end);
+  if (start > 0)
+    snippet = "..." + snippet;
+  if (end < text.length)
+    snippet = snippet + "...";
+  return snippet;
+}
+function formatResults(results) {
+  if (results.length === 0)
+    return "No results.";
+  return results.map((r, i) => {
+    const typeTag = `[${r.type.toUpperCase()}]`;
+    const scoreTag = `(score: ${r.score.toFixed(2)})`;
+    const age = r.created_at ? formatAge(r.created_at) : "";
+    const meta3 = formatMeta(r);
+    return `${i + 1}. ${typeTag} ${r.title}
+   ${scoreTag} ${age}${meta3}
+   ${r.snippet}`;
+  }).join("\n\n");
+}
+function formatAge(dateStr) {
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(ms / 864e5);
+  if (days === 0)
+    return "today ";
+  if (days === 1)
+    return "1d ago ";
+  if (days < 7)
+    return `${days}d ago `;
+  if (days < 30)
+    return `${Math.floor(days / 7)}w ago `;
+  return `${Math.floor(days / 30)}mo ago `;
+}
+function formatMeta(r) {
+  const parts = [];
+  if (r.metadata.severity)
+    parts.push(`severity:${r.metadata.severity}`);
+  if (r.metadata.category)
+    parts.push(`cat:${r.metadata.category}`);
+  if (r.metadata.priority)
+    parts.push(`prio:${r.metadata.priority}`);
+  return parts.length > 0 ? `[${parts.join(", ")}] ` : "";
+}
+
 // dist/modules/decisions.js
 function addDecision(input) {
   const db2 = getDb();
@@ -31164,38 +31335,14 @@ function registerSessionTools(server2) {
     }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
-  server2.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings", {
-    query: external_exports3.string(),
-    limit: external_exports3.number().optional()
+  server2.tool("cortex_search", "Full-text search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Returns results ranked by BM25 relevance across all entity types.", {
+    query: external_exports3.string().describe('Search query \u2014 supports FTS5 syntax (AND, OR, NOT, "phrase")'),
+    limit: external_exports3.number().optional().describe("Max results to return (default: 15)")
   }, async ({ query, limit }) => {
-    const db2 = getDb();
-    const maxResults = limit ?? 10;
-    const lines = [];
-    function ftsSearch(ftsTable, labelFn, prefix) {
-      try {
-        const rows = db2.prepare("SELECT rowid, * FROM " + ftsTable + " WHERE " + ftsTable + " MATCH ? ORDER BY bm25(" + ftsTable + ") LIMIT ?").all(query, maxResults);
-        for (const r of rows)
-          lines.push(prefix + " " + labelFn(r));
-      } catch {
-      }
-    }
-    ftsSearch("learnings_fts", (r) => r.anti_pattern, "[LEARNING]");
-    ftsSearch("decisions_fts", (r) => r.title, "[DECISION]");
-    ftsSearch("errors_fts", (r) => r.error_message, "[ERROR]");
-    ftsSearch("notes_fts", (r) => String(r.text).slice(0, 120), "[NOTE]");
-    try {
-      const sr = db2.prepare("SELECT summary FROM sessions WHERE summary LIKE ? AND status != 'active' ORDER BY started_at DESC LIMIT ?").all("%" + query + "%", maxResults);
-      for (const s of sr)
-        lines.push("[SESSION] " + s.summary);
-    } catch {
-    }
-    try {
-      const ur = db2.prepare("SELECT description FROM unfinished WHERE description LIKE ? AND resolved_at IS NULL LIMIT ?").all("%" + query + "%", maxResults);
-      for (const u of ur)
-        lines.push("[TODO] " + u.description);
-    } catch {
-    }
-    return { content: [{ type: "text", text: lines.join("\n") || "No results." }] };
+    getDb();
+    const results = searchAll(query, limit ?? 15);
+    const formatted = formatResults(results);
+    return { content: [{ type: "text", text: formatted }] };
   });
   server2.tool("cortex_get_context", "Get relevant context for specific files or the current work", {
     files: external_exports3.array(external_exports3.string()).optional()

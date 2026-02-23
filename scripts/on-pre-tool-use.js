@@ -75,11 +75,32 @@ function main() {
     const filePath = tool_input.file_path || '';
     const isDocFile = /\.(md|txt|rst|adoc)$/i.test(filePath);
 
+    // Check if a regex match is inside a string literal (backtick, single or double quotes)
+    function isInStringLiteral(text, matchIdx) {
+      const before = text.slice(0, matchIdx);
+      const backticks = (before.match(/(?<!\\)`/g) || []).length;
+      if (backticks % 2 === 1) return true;
+      const singles = (before.match(/(?<!\\)'/g) || []).length;
+      if (singles % 2 === 1) return true;
+      const doubles = (before.match(/(?<!\\)"/g) || []).length;
+      if (doubles % 2 === 1) return true;
+      return false;
+    }
+
     const boostStmt = db.prepare(`UPDATE learnings SET confidence = MIN(0.9, confidence + 0.1) WHERE id = ?`);
     for (const l of learnings) {
       if (isDocFile) continue; // Docs/Plans enthalten Code-Snippets — keine false positives
       try {
-        if (new RegExp(l.detection_regex, 'gm').test(content)) {
+        const rx = new RegExp(l.detection_regex, 'gm');
+        let match;
+        let realMatch = false;
+        while ((match = rx.exec(content)) !== null) {
+          if (!isInStringLiteral(content, match.index)) {
+            realMatch = true;
+            break;
+          }
+        }
+        if (realMatch) {
           // Boost confidence on match (nicht für core_memory — die sind immer 0.9)
           if (l.core_memory !== 1) {
             try { boostStmt.run(l.id); } catch { /* non-critical */ }
