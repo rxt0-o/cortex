@@ -162,4 +162,72 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
     }
   );
 
-} // Ende registerCoreTools (TEMPORAER - wird in Task 2 wieder geoeffnet)
+
+  server.tool(
+    'cortex_search',
+    'Search all Cortex memory: decisions, errors, learnings, todos, notes, sessions',
+    {
+      query: z.string().describe('Search query (FTS5: AND, OR, NOT, "phrase")'),
+      limit: z.number().optional().describe('Max results (default: 15)'),
+    },
+    async ({ query, limit }) => {
+      getDb();
+      const results = await search.searchAll(query, limit ?? 15);
+      const formatted = search.formatResults(results);
+      return { content: [{ type: 'text' as const, text: formatted }] };
+    }
+  );
+
+  server.tool(
+    'cortex_context',
+    'Get session context: recent sessions, todos, learnings, health. Pass files for file-specific context.',
+    {
+      files: z.array(z.string()).optional().describe('File paths for targeted context'),
+    },
+    async ({ files }) => {
+      getDb();
+      const ctx: Record<string, unknown> = {};
+      ctx.recentSessions = sessions.getRecentSummaries(3);
+      ctx.unfinished = unfinished.listUnfinished({ limit: 10 });
+      if (files && files.length > 0) {
+        ctx.fileErrors = errors.getErrorsForFiles(files);
+      }
+      ctx.activeLearnings = learnings.listLearnings({ autoBlockOnly: true });
+      ctx.health = health.getLatestSnapshot();
+      ctx.projectMap = projectMap.getModuleSummary();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(ctx, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'cortex_list',
+    'List stored items by type',
+    {
+      type: z.enum(['decisions', 'errors', 'learnings', 'todos', 'notes'])
+        .describe('What to list'),
+      category: z.string().optional().describe('decisions: filter by category'),
+      severity: z.string().optional().describe('errors/learnings: filter by severity'),
+      auto_block_only: z.boolean().optional().describe('learnings: only auto-blocking rules'),
+      limit: z.number().optional(),
+    },
+    async (input) => {
+      const db = getDb();
+      let result: unknown;
+
+      if (input.type === 'decisions') {
+        result = decisions.listDecisions({ category: input.category, limit: input.limit });
+      } else if (input.type === 'errors') {
+        result = errors.listErrors({ severity: input.severity, limit: input.limit });
+      } else if (input.type === 'learnings') {
+        result = learnings.listLearnings({ autoBlockOnly: input.auto_block_only, limit: input.limit ?? 50 });
+      } else if (input.type === 'todos') {
+        result = unfinished.listUnfinished({ limit: input.limit });
+      } else if (input.type === 'notes') {
+        result = db.prepare(`SELECT * FROM notes WHERE 1=1 ORDER BY created_at DESC LIMIT ?`).all(input.limit ?? 50);
+      }
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+} // Ende registerCoreTools
