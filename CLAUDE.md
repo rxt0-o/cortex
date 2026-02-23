@@ -107,21 +107,18 @@ MCP Server (55 Tools)
 ### Pflicht-Calls
 | Wann | Tool |
 |---|---|
-| Vor jedem Write/Edit | `cortex_check_regression` |
-| Bei Architektur-Entscheidungen | `cortex_add_decision` |
-| Nach Bug-Fixes | `cortex_add_error` mit fix_description |
-| Bei Session-Start (komplex) | `cortex_snapshot` |
+| Vor jedem Write/Edit | check_regression läuft automatisch im PreToolUse-Hook |
+| Bei Architektur-Entscheidungen | `cortex_store(type:'decision', ...)` |
+| Nach Bug-Fixes | `cortex_store(type:'error', ...)` mit prevention_rule |
+| Bei Session-Start (komplex) | `cortex_context()` |
 
-### Wichtige Tool-Gruppen
-```
-cortex_load_tools(['memory'])       → snapshot, get_context, list_sessions, search
-cortex_load_tools(['decisions'])    → add/list/mark_reviewed
-cortex_load_tools(['errors'])       → add_error, add_learning, check_regression
-cortex_load_tools(['map'])          → scan, get_map, get_deps, hot_zones
-cortex_load_tools(['tracking'])     → add/get/resolve_unfinished, add_intent, snooze
-cortex_load_tools(['intelligence']) → dejavu, blind_spots, mood, forget
-cortex_load_tools(['stats'])        → get_health, get_stats, access_stats
-```
+### Tools
+- `cortex_store(type, ...)` — decision / error / learning / todo / intent / note
+- `cortex_search(query)` — FTS5-Suche
+- `cortex_context(files?)` — Kontext abrufen
+- `cortex_list(type)` — decisions / errors / learnings / todos / notes
+- `cortex_resolve(type, id)` — abschließen/aktualisieren
+- `cortex_snooze(description, until)` — Reminder setzen
 
 ---
 
