@@ -1,8 +1,3 @@
 {
-  "mcpServers": {
-    "cortex": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/dist/bundle.js"]
-    }
-  }
+  "mcpServers": {}
 }

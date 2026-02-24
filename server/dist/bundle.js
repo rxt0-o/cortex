@@ -6800,6 +6800,145 @@ var require_dist = __commonJS({
   }
 });
 
+// dist/shared/fts-schema.js
+var FTS_TABLES, FTS_TRIGGER_DROPS, FTS_TRIGGERS;
+var init_fts_schema = __esm({
+  "dist/shared/fts-schema.js"() {
+    "use strict";
+    FTS_TABLES = `
+CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(anti_pattern, correct_pattern, context, content='learnings', content_rowid='id');
+CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts USING fts5(title, reasoning, content='decisions', content_rowid='id');
+CREATE VIRTUAL TABLE IF NOT EXISTS errors_fts USING fts5(error_message, root_cause, fix_description, content='errors', content_rowid='id');
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(text, content='notes', content_rowid='id');
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(summary, key_changes, content='sessions', content_rowid='rowid');
+CREATE VIRTUAL TABLE IF NOT EXISTS unfinished_fts USING fts5(description, context, content='unfinished', content_rowid='id');
+`;
+    FTS_TRIGGER_DROPS = `
+DROP TRIGGER IF EXISTS learnings_ai;
+DROP TRIGGER IF EXISTS learnings_au;
+DROP TRIGGER IF EXISTS learnings_ad;
+DROP TRIGGER IF EXISTS decisions_ai;
+DROP TRIGGER IF EXISTS decisions_au;
+DROP TRIGGER IF EXISTS decisions_ad;
+DROP TRIGGER IF EXISTS errors_ai;
+DROP TRIGGER IF EXISTS errors_au;
+DROP TRIGGER IF EXISTS errors_ad;
+DROP TRIGGER IF EXISTS notes_ai;
+DROP TRIGGER IF EXISTS notes_au;
+DROP TRIGGER IF EXISTS notes_ad;
+DROP TRIGGER IF EXISTS sessions_ai;
+DROP TRIGGER IF EXISTS sessions_au;
+DROP TRIGGER IF EXISTS sessions_ad;
+DROP TRIGGER IF EXISTS unfinished_ai;
+DROP TRIGGER IF EXISTS unfinished_au;
+DROP TRIGGER IF EXISTS unfinished_ad;
+`;
+    FTS_TRIGGERS = `
+CREATE TRIGGER IF NOT EXISTS learnings_ai AFTER INSERT ON learnings BEGIN
+    INSERT INTO learnings_fts(rowid, anti_pattern, correct_pattern, context)
+    VALUES (new.id, new.anti_pattern, new.correct_pattern, COALESCE(new.context,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS learnings_au AFTER UPDATE OF anti_pattern, correct_pattern, context ON learnings BEGIN
+    INSERT INTO learnings_fts(learnings_fts, rowid, anti_pattern, correct_pattern, context)
+    VALUES ('delete', old.id, old.anti_pattern, old.correct_pattern, COALESCE(old.context,''));
+    INSERT INTO learnings_fts(rowid, anti_pattern, correct_pattern, context)
+    VALUES (new.id, new.anti_pattern, new.correct_pattern, COALESCE(new.context,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS learnings_ad AFTER DELETE ON learnings BEGIN
+    INSERT INTO learnings_fts(learnings_fts, rowid, anti_pattern, correct_pattern, context)
+    VALUES ('delete', old.id, old.anti_pattern, old.correct_pattern, COALESCE(old.context,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN
+    INSERT INTO decisions_fts(rowid, title, reasoning)
+    VALUES (new.id, new.title, COALESCE(new.reasoning,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE OF title, reasoning ON decisions BEGIN
+    INSERT INTO decisions_fts(decisions_fts, rowid, title, reasoning)
+    VALUES ('delete', old.id, old.title, COALESCE(old.reasoning,''));
+    INSERT INTO decisions_fts(rowid, title, reasoning)
+    VALUES (new.id, new.title, COALESCE(new.reasoning,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_ad AFTER DELETE ON decisions BEGIN
+    INSERT INTO decisions_fts(decisions_fts, rowid, title, reasoning)
+    VALUES ('delete', old.id, old.title, COALESCE(old.reasoning,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS errors_ai AFTER INSERT ON errors BEGIN
+    INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description)
+    VALUES (new.id, COALESCE(new.error_message,''), COALESCE(new.root_cause,''), COALESCE(new.fix_description,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS errors_au AFTER UPDATE OF error_message, root_cause, fix_description ON errors BEGIN
+    INSERT INTO errors_fts(errors_fts, rowid, error_message, root_cause, fix_description)
+    VALUES ('delete', old.id, COALESCE(old.error_message,''), COALESCE(old.root_cause,''), COALESCE(old.fix_description,''));
+    INSERT INTO errors_fts(rowid, error_message, root_cause, fix_description)
+    VALUES (new.id, COALESCE(new.error_message,''), COALESCE(new.root_cause,''), COALESCE(new.fix_description,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS errors_ad AFTER DELETE ON errors BEGIN
+    INSERT INTO errors_fts(errors_fts, rowid, error_message, root_cause, fix_description)
+    VALUES ('delete', old.id, COALESCE(old.error_message,''), COALESCE(old.root_cause,''), COALESCE(old.fix_description,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, text)
+    VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE OF text ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, text)
+    VALUES ('delete', old.id, old.text);
+    INSERT INTO notes_fts(rowid, text)
+    VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, text)
+    VALUES ('delete', old.id, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+    INSERT INTO sessions_fts(rowid, summary, key_changes)
+    VALUES (new.rowid, COALESCE(new.summary,''), COALESCE(new.key_changes,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF summary, key_changes ON sessions BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, summary, key_changes)
+    VALUES ('delete', old.rowid, COALESCE(old.summary,''), COALESCE(old.key_changes,''));
+    INSERT INTO sessions_fts(rowid, summary, key_changes)
+    VALUES (new.rowid, COALESCE(new.summary,''), COALESCE(new.key_changes,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, summary, key_changes)
+    VALUES ('delete', old.rowid, COALESCE(old.summary,''), COALESCE(old.key_changes,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS unfinished_ai AFTER INSERT ON unfinished BEGIN
+    INSERT INTO unfinished_fts(rowid, description, context)
+    VALUES (new.id, new.description, COALESCE(new.context,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS unfinished_au AFTER UPDATE OF description, context ON unfinished BEGIN
+    INSERT INTO unfinished_fts(unfinished_fts, rowid, description, context)
+    VALUES ('delete', old.id, old.description, COALESCE(old.context,''));
+    INSERT INTO unfinished_fts(rowid, description, context)
+    VALUES (new.id, new.description, COALESCE(new.context,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS unfinished_ad AFTER DELETE ON unfinished BEGIN
+    INSERT INTO unfinished_fts(unfinished_fts, rowid, description, context)
+    VALUES ('delete', old.id, old.description, COALESCE(old.context,''));
+END;
+`;
+  }
+});
+
 // dist/db.js
 import { DatabaseSync } from "node:sqlite";
 import path from "path";
@@ -6825,34 +6964,63 @@ function getDb(projectDir) {
   return db;
 }
 function initSchema(database) {
-  const versionRow = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").get();
-  if (!versionRow) {
+  const hasAnyCoreTable = hasTable(database, "sessions") || hasTable(database, "decisions") || hasTable(database, "errors") || hasTable(database, "learnings") || hasTable(database, "unfinished");
+  if (!hasAnyCoreTable) {
     database.exec(SCHEMA_SQL);
-    database.prepare("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
+    database.exec(FTS_TABLES);
+    database.exec(FTS_TRIGGER_DROPS);
+    database.exec(FTS_TRIGGERS);
+    ensureSchemaVersionRow(database);
+    database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
     return;
   }
-  const current = database.prepare("SELECT version FROM schema_version").get();
-  if (!current || current.version < SCHEMA_VERSION) {
-    if (!current || current.version < 2) {
-      const migrations = [
-        "ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE decisions ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE decisions ADD COLUMN archived_at TEXT",
-        "ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE learnings ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE learnings ADD COLUMN archived_at TEXT",
-        "ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0",
-        "ALTER TABLE errors ADD COLUMN last_accessed TEXT",
-        "ALTER TABLE errors ADD COLUMN archived_at TEXT"
-      ];
-      for (const sql of migrations) {
-        try {
-          database.exec(sql);
-        } catch {
-        }
-      }
+  for (const sql of COMPAT_MIGRATIONS) {
+    try {
+      database.exec(sql);
+    } catch {
     }
-    database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
+  }
+  try {
+    database.exec(SCHEMA_SQL);
+  } catch {
+  }
+  try {
+    database.exec(FTS_TABLES);
+  } catch {
+  }
+  database.exec(FTS_TRIGGER_DROPS);
+  database.exec(FTS_TRIGGERS);
+  const backfillSql = [
+    `UPDATE decisions SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+    `UPDATE decisions SET importance_score = 0.5 WHERE importance_score IS NULL`,
+    `UPDATE errors SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+    `UPDATE errors SET importance_score = 0.5 WHERE importance_score IS NULL`,
+    `UPDATE learnings SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+    `UPDATE learnings SET importance_score = 0.5 WHERE importance_score IS NULL`,
+    `UPDATE notes SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+    `UPDATE notes SET importance_score = 0.5 WHERE importance_score IS NULL`,
+    `UPDATE unfinished SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+    `UPDATE unfinished SET importance_score = 0.5 WHERE importance_score IS NULL`,
+    `UPDATE notes SET access_count = 0 WHERE access_count IS NULL`,
+    `UPDATE unfinished SET access_count = 0 WHERE access_count IS NULL`
+  ];
+  for (const sql of backfillSql) {
+    try {
+      database.exec(sql);
+    } catch {
+    }
+  }
+  ensureSchemaVersionRow(database);
+  database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
+}
+function hasTable(database, name) {
+  const row = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+  return Boolean(row);
+}
+function ensureSchemaVersionRow(database) {
+  const row = database.prepare("SELECT version FROM schema_version LIMIT 1").get();
+  if (!row) {
+    database.prepare("INSERT INTO schema_version (version) VALUES (0)").run();
   }
 }
 function closeDb() {
@@ -6880,12 +7048,13 @@ function toJson(value) {
     return null;
   return JSON.stringify(value);
 }
-var db, SCHEMA_VERSION, SCHEMA_SQL;
+var db, SCHEMA_VERSION, SCHEMA_SQL, COMPAT_MIGRATIONS;
 var init_db = __esm({
   "dist/db.js"() {
     "use strict";
+    init_fts_schema();
     db = null;
-    SCHEMA_VERSION = 3;
+    SCHEMA_VERSION = 9;
     SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -6896,7 +7065,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   key_changes TEXT,
   chain_id TEXT,
   chain_label TEXT,
-  status TEXT DEFAULT 'active'
+  status TEXT DEFAULT 'active',
+  tags TEXT,
+  sentiment TEXT,
+  emotional_tone TEXT,
+  mood_score INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -6912,7 +7085,14 @@ CREATE TABLE IF NOT EXISTS decisions (
   confidence TEXT DEFAULT 'high',
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  stale INTEGER DEFAULT 0,
+  reviewed_at TEXT,
+  counter_arguments TEXT,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS errors (
@@ -6931,7 +7111,11 @@ CREATE TABLE IF NOT EXISTS errors (
   severity TEXT DEFAULT 'medium',
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS learnings (
@@ -6947,7 +7131,21 @@ CREATE TABLE IF NOT EXISTS learnings (
   auto_block INTEGER DEFAULT 0,
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  core_memory INTEGER DEFAULT 0,
+  example_code TEXT,
+  theoretical_hits INTEGER DEFAULT 0,
+  practical_violations INTEGER DEFAULT 0,
+  superseded_by INTEGER REFERENCES learnings(id),
+  superseded_at TEXT,
+  relevance TEXT DEFAULT 'maybe_relevant',
+  write_gate_reason TEXT,
+  confidence REAL DEFAULT 0.7,
+  shared INTEGER DEFAULT 0,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS project_modules (
@@ -6972,7 +7170,8 @@ CREATE TABLE IF NOT EXISTS project_files (
   change_count INTEGER DEFAULT 0,
   error_count INTEGER DEFAULT 0,
   last_changed TEXT,
-  last_changed_session TEXT
+  last_changed_session TEXT,
+  cluster_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -7017,7 +7216,15 @@ CREATE TABLE IF NOT EXISTS unfinished (
   context TEXT,
   priority TEXT DEFAULT 'medium',
   resolved_at TEXT,
-  resolved_session TEXT
+  resolved_session TEXT,
+  snooze_until TEXT,
+  priority_score INTEGER DEFAULT 50,
+  project TEXT,
+  blocked_by TEXT,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS health_snapshots (
@@ -7028,8 +7235,90 @@ CREATE TABLE IF NOT EXISTS health_snapshots (
   trend TEXT
 );
 
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  tags TEXT,
+  entity_type TEXT,
+  entity_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now')),
+  session_id TEXT,
+  project TEXT,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT DEFAULT (datetime('now')),
+  tool_name TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
+  action TEXT NOT NULL,
+  old_value TEXT,
+  new_value TEXT,
+  session_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(entity_type, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS working_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  type TEXT NOT NULL,
+  activation_level REAL DEFAULT 1.0,
+  created_at TEXT DEFAULT (datetime('now')),
+  last_accessed TEXT DEFAULT (datetime('now')),
+  access_count INTEGER DEFAULT 1,
+  metadata TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auto_extractions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  status TEXT DEFAULT 'pending',
+  source_context TEXT,
+  promoted_to_type TEXT,
+  promoted_to_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS memory_associations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_type TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  relation TEXT NOT NULL,
+  strength REAL DEFAULT 1.0,
+  last_activated TEXT DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(source_type, source_id, target_type, target_id, relation),
+  CHECK(strength >= 0.0 AND strength <= 1.0),
+  CHECK(NOT (source_type = target_type AND source_id = target_id))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -7050,19 +7339,219 @@ CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
 CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
 CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
+CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC);
+CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_ae_confidence ON auto_extractions(confidence);
+
+CREATE INDEX IF NOT EXISTS idx_ma_source ON memory_associations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_ma_target ON memory_associations(target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_strength ON decisions(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_decisions_importance ON decisions(importance_score);
+CREATE INDEX IF NOT EXISTS idx_errors_strength ON errors(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_errors_importance ON errors(importance_score);
+CREATE INDEX IF NOT EXISTS idx_learnings_strength ON learnings(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_learnings_importance ON learnings(importance_score);
+CREATE INDEX IF NOT EXISTS idx_notes_strength ON notes(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_notes_importance ON notes(importance_score);
+CREATE INDEX IF NOT EXISTS idx_unfinished_strength ON unfinished(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_score);
 `;
+    COMPAT_MIGRATIONS = [
+      // Canonical tables (safe on existing DBs)
+      `
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    tags TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    session_id TEXT,
+    project TEXT,
+    entity_type TEXT,
+    entity_id INTEGER
+  )
+  `,
+      `
+  CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (datetime('now')),
+    tool_name TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id INTEGER,
+    action TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    session_id TEXT
+  )
+  `,
+      `
+  CREATE TABLE IF NOT EXISTS embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(entity_type, entity_id)
+  )
+  `,
+      `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`,
+      // v2 server fields
+      `ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0`,
+      `ALTER TABLE decisions ADD COLUMN last_accessed TEXT`,
+      `ALTER TABLE decisions ADD COLUMN archived_at TEXT`,
+      `ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN last_accessed TEXT`,
+      `ALTER TABLE learnings ADD COLUMN archived_at TEXT`,
+      `ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0`,
+      `ALTER TABLE errors ADD COLUMN last_accessed TEXT`,
+      `ALTER TABLE errors ADD COLUMN archived_at TEXT`,
+      // Hook/runtime fields that server tools reference
+      `ALTER TABLE sessions ADD COLUMN tags TEXT`,
+      `ALTER TABLE sessions ADD COLUMN sentiment TEXT`,
+      `ALTER TABLE sessions ADD COLUMN emotional_tone TEXT`,
+      `ALTER TABLE sessions ADD COLUMN mood_score INTEGER`,
+      `ALTER TABLE decisions ADD COLUMN archived INTEGER DEFAULT 0`,
+      `ALTER TABLE decisions ADD COLUMN stale INTEGER DEFAULT 0`,
+      `ALTER TABLE decisions ADD COLUMN reviewed_at TEXT`,
+      `ALTER TABLE decisions ADD COLUMN counter_arguments TEXT`,
+      `ALTER TABLE decisions ADD COLUMN scope TEXT DEFAULT 'project'`,
+      `ALTER TABLE errors ADD COLUMN archived INTEGER DEFAULT 0`,
+      `ALTER TABLE errors ADD COLUMN scope TEXT DEFAULT 'project'`,
+      `ALTER TABLE learnings ADD COLUMN archived INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN core_memory INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN example_code TEXT`,
+      `ALTER TABLE learnings ADD COLUMN theoretical_hits INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN practical_violations INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN superseded_by INTEGER REFERENCES learnings(id)`,
+      `ALTER TABLE learnings ADD COLUMN superseded_at TEXT`,
+      `ALTER TABLE learnings ADD COLUMN relevance TEXT DEFAULT 'maybe_relevant'`,
+      `ALTER TABLE learnings ADD COLUMN write_gate_reason TEXT`,
+      `ALTER TABLE learnings ADD COLUMN confidence REAL DEFAULT 0.7`,
+      `ALTER TABLE learnings ADD COLUMN shared INTEGER DEFAULT 0`,
+      `ALTER TABLE learnings ADD COLUMN scope TEXT DEFAULT 'project'`,
+      `ALTER TABLE unfinished ADD COLUMN snooze_until TEXT`,
+      `ALTER TABLE unfinished ADD COLUMN priority_score INTEGER DEFAULT 50`,
+      `ALTER TABLE unfinished ADD COLUMN project TEXT`,
+      `ALTER TABLE unfinished ADD COLUMN blocked_by TEXT`,
+      `ALTER TABLE project_files ADD COLUMN cluster_id INTEGER`,
+      `ALTER TABLE notes ADD COLUMN project TEXT`,
+      `ALTER TABLE notes ADD COLUMN entity_type TEXT`,
+      `ALTER TABLE notes ADD COLUMN entity_id INTEGER`,
+      // Safety indexes
+      `CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`,
+      `CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_sessions_chain_id ON sessions(chain_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category)`,
+      `CREATE INDEX IF NOT EXISTS idx_errors_signature ON errors(error_signature)`,
+      `CREATE INDEX IF NOT EXISTS idx_errors_severity ON errors(severity)`,
+      `CREATE INDEX IF NOT EXISTS idx_learnings_auto_block ON learnings(auto_block)`,
+      `CREATE INDEX IF NOT EXISTS idx_project_files_module ON project_files(module_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_project_files_path ON project_files(path)`,
+      `CREATE INDEX IF NOT EXISTS idx_dependencies_source ON dependencies(source_file)`,
+      `CREATE INDEX IF NOT EXISTS idx_dependencies_target ON dependencies(target_file)`,
+      `CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_diffs_file ON diffs(file_path)`,
+      `CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id)`,
+      // Phase 4: Brain Foundation — neue Tabellen
+      `CREATE TABLE IF NOT EXISTS working_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    type TEXT NOT NULL,
+    activation_level REAL DEFAULT 1.0,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_accessed TEXT DEFAULT (datetime('now')),
+    access_count INTEGER DEFAULT 1,
+    metadata TEXT
+  )`,
+      `CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC)`,
+      `CREATE TABLE IF NOT EXISTS auto_extractions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT DEFAULT 'pending',
+    source_context TEXT,
+    promoted_to_type TEXT,
+    promoted_to_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+      `CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_ae_confidence ON auto_extractions(confidence)`,
+      // Phase 4: memory_strength + importance_score auf allen 5 Content-Tabellen
+      `ALTER TABLE decisions ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+      `ALTER TABLE decisions ADD COLUMN importance_score REAL DEFAULT 0.5`,
+      `ALTER TABLE errors ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+      `ALTER TABLE errors ADD COLUMN importance_score REAL DEFAULT 0.5`,
+      `ALTER TABLE learnings ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+      `ALTER TABLE learnings ADD COLUMN importance_score REAL DEFAULT 0.5`,
+      `ALTER TABLE notes ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+      `ALTER TABLE notes ADD COLUMN importance_score REAL DEFAULT 0.5`,
+      `ALTER TABLE unfinished ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+      `ALTER TABLE unfinished ADD COLUMN importance_score REAL DEFAULT 0.5`,
+      // Phase 4: access_count + last_accessed nur auf notes + unfinished (decisions/errors/learnings haben es bereits)
+      `ALTER TABLE notes ADD COLUMN access_count INTEGER DEFAULT 0`,
+      `ALTER TABLE notes ADD COLUMN last_accessed TEXT`,
+      `ALTER TABLE unfinished ADD COLUMN access_count INTEGER DEFAULT 0`,
+      `ALTER TABLE unfinished ADD COLUMN last_accessed TEXT`,
+      // Phase 4: Neue Indizes fuer Decay + Importance-Queries
+      `CREATE INDEX IF NOT EXISTS idx_decisions_strength ON decisions(memory_strength)`,
+      `CREATE INDEX IF NOT EXISTS idx_decisions_importance ON decisions(importance_score)`,
+      `CREATE INDEX IF NOT EXISTS idx_errors_strength ON errors(memory_strength)`,
+      `CREATE INDEX IF NOT EXISTS idx_errors_importance ON errors(importance_score)`,
+      `CREATE INDEX IF NOT EXISTS idx_learnings_strength ON learnings(memory_strength)`,
+      `CREATE INDEX IF NOT EXISTS idx_learnings_importance ON learnings(importance_score)`,
+      `CREATE INDEX IF NOT EXISTS idx_notes_strength ON notes(memory_strength)`,
+      `CREATE INDEX IF NOT EXISTS idx_notes_importance ON notes(importance_score)`,
+      `CREATE INDEX IF NOT EXISTS idx_unfinished_strength ON unfinished(memory_strength)`,
+      `CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_score)`,
+      // Phase 6: memory_associations Tabelle
+      `CREATE TABLE IF NOT EXISTS memory_associations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    relation TEXT NOT NULL,
+    strength REAL DEFAULT 1.0,
+    last_activated TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(source_type, source_id, target_type, target_id, relation),
+    CHECK(strength >= 0.0 AND strength <= 1.0),
+    CHECK(NOT (source_type = target_type AND source_id = target_id))
+  )`,
+      `CREATE INDEX IF NOT EXISTS idx_ma_source ON memory_associations(source_type, source_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_ma_target ON memory_associations(target_type, target_id)`
+    ];
   }
 });
 
 // dist/modules/embeddings.js
 var embeddings_exports = {};
 __export(embeddings_exports, {
+  backfillEmbeddings: () => backfillEmbeddings,
   buildEmbeddingText: () => buildEmbeddingText,
-  cosineSimilarity: () => cosineSimilarity,
+  cosineSimilarity: () => cosineSimilarity2,
   embed: () => embed,
-  findSimilar: () => findSimilar,
+  findSimilar: () => findSimilar2,
   getAllEmbeddings: () => getAllEmbeddings,
+  getEmbeddingCount: () => getEmbeddingCount,
   isAvailable: () => isAvailable,
+  isDuplicate: () => isDuplicate,
   storeEmbedding: () => storeEmbedding
 });
 async function getPipeline() {
@@ -7079,7 +7568,7 @@ async function embed(text) {
   const output = await pipe2(text, { pooling: "mean", normalize: true });
   return new Float32Array(output.data);
 }
-function cosineSimilarity(a, b) {
+function cosineSimilarity2(a, b) {
   let dot = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
@@ -7107,13 +7596,13 @@ function getAllEmbeddings() {
     return [];
   }
 }
-async function findSimilar(queryText, limit = 15) {
+async function findSimilar2(queryText, limit = 15) {
   const queryEmb = await embed(queryText);
   const all = getAllEmbeddings();
   const scored = all.map((row) => ({
     entity_type: row.entity_type,
     entity_id: row.entity_id,
-    score: cosineSimilarity(queryEmb, row.embedding)
+    score: cosineSimilarity2(queryEmb, row.embedding)
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
@@ -7121,20 +7610,175 @@ async function findSimilar(queryText, limit = 15) {
 function buildEmbeddingText(fields) {
   const parts = [];
   for (const [, value] of Object.entries(fields)) {
-    if (value && typeof value === "string") {
-      parts.push(value);
+    if (typeof value === "string" && value.trim().length > 0) {
+      parts.push(value.trim());
+      continue;
+    }
+    if (Array.isArray(value)) {
+      const asText = value.filter((v) => typeof v === "string").join(" ").trim();
+      if (asText)
+        parts.push(asText);
     }
   }
   return parts.join(" ").slice(0, 512);
 }
-function isAvailable() {
+function getEmbeddingCount() {
   const db2 = getDb();
   try {
     const row = db2.prepare("SELECT COUNT(*) as c FROM embeddings").get();
-    return row.c > 0;
+    return row.c ?? 0;
   } catch {
-    return false;
+    return 0;
   }
+}
+function isAvailable() {
+  return getEmbeddingCount() > 0;
+}
+async function isDuplicate(text, threshold = 0.92) {
+  try {
+    const results = await findSimilar2(text, 1);
+    if (results.length > 0 && results[0].score >= threshold) {
+      return results[0];
+    }
+  } catch {
+  }
+  return null;
+}
+async function backfillEmbeddings(options) {
+  const db2 = getDb();
+  const limit = options?.limitPerType ?? 300;
+  const force = options?.force ?? false;
+  const includeResolvedTodos = options?.includeResolvedTodos ?? false;
+  const candidates = collectBackfillCandidates(db2, limit, includeResolvedTodos);
+  const existing = force ? /* @__PURE__ */ new Set() : getExistingKeys(db2);
+  const result = {
+    scanned: candidates.length,
+    embedded: 0,
+    skipped: 0,
+    errors: 0,
+    byType: {
+      decision: 0,
+      error: 0,
+      learning: 0,
+      note: 0,
+      session: 0,
+      todo: 0
+    }
+  };
+  for (const c of candidates) {
+    const key = `${c.entity_type}:${c.entity_id}`;
+    if (!force && existing.has(key)) {
+      result.skipped++;
+      continue;
+    }
+    try {
+      const vec = await embed(c.text);
+      storeEmbedding(c.entity_type, c.entity_id, vec);
+      result.embedded++;
+      result.byType[c.entity_type]++;
+    } catch {
+      result.errors++;
+    }
+  }
+  return result;
+}
+function getExistingKeys(db2) {
+  try {
+    const rows = db2.prepare("SELECT entity_type, entity_id FROM embeddings").all();
+    return new Set(rows.map((r) => `${r.entity_type}:${r.entity_id}`));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function collectBackfillCandidates(db2, limitPerType, includeResolvedTodos) {
+  const candidates = [];
+  const decisions = db2.prepare(`
+    SELECT id, title, reasoning
+    FROM decisions
+    WHERE archived_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of decisions) {
+    const text = buildEmbeddingText({ title: row.title, reasoning: row.reasoning });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "decision", entity_id: String(row.id), text });
+  }
+  const errors = db2.prepare(`
+    SELECT id, error_message, root_cause, fix_description
+    FROM errors
+    WHERE archived_at IS NULL
+    ORDER BY last_seen DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of errors) {
+    const text = buildEmbeddingText({
+      error_message: row.error_message,
+      root_cause: row.root_cause ?? "",
+      fix_description: row.fix_description ?? ""
+    });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "error", entity_id: String(row.id), text });
+  }
+  const learnings = db2.prepare(`
+    SELECT id, anti_pattern, correct_pattern, context
+    FROM learnings
+    WHERE archived_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of learnings) {
+    const text = buildEmbeddingText({
+      anti_pattern: row.anti_pattern,
+      correct_pattern: row.correct_pattern,
+      context: row.context
+    });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "learning", entity_id: String(row.id), text });
+  }
+  const notes = db2.prepare(`
+    SELECT id, text
+    FROM notes
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of notes) {
+    const text = buildEmbeddingText({ text: row.text });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "note", entity_id: String(row.id), text });
+  }
+  const sessions = db2.prepare(`
+    SELECT id, summary, key_changes
+    FROM sessions
+    WHERE summary IS NOT NULL
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of sessions) {
+    const text = buildEmbeddingText({
+      summary: row.summary ?? "",
+      key_changes: row.key_changes ?? ""
+    });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "session", entity_id: row.id, text });
+  }
+  const todoWhere = includeResolvedTodos ? "" : "WHERE resolved_at IS NULL";
+  const todos = db2.prepare(`
+    SELECT id, description, context
+    FROM unfinished
+    ${todoWhere}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+  for (const row of todos) {
+    const text = buildEmbeddingText({
+      description: row.description,
+      context: row.context ?? ""
+    });
+    if (text.length >= 10)
+      candidates.push({ entity_type: "todo", entity_id: String(row.id), text });
+  }
+  return candidates;
 }
 var pipeline;
 var init_embeddings = __esm({
@@ -30316,98 +30960,226 @@ var StdioServerTransport = class {
 // dist/index.js
 init_db();
 
-// dist/tools/sessions.js
+// dist/tools/core.js
 init_db();
 
-// dist/modules/sessions.js
+// dist/modules/decisions.js
 init_db();
-function createSession(input) {
-  const db2 = getDb();
-  const startedAt = input.started_at ?? now();
-  db2.prepare(`
-    INSERT OR IGNORE INTO sessions (id, started_at, status)
-    VALUES (?, ?, 'active')
-  `).run(input.id, startedAt);
-  return getSession(input.id);
+
+// dist/utils/similarity.js
+var STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "is",
+  "it",
+  "this",
+  "that",
+  "are",
+  "was",
+  "be",
+  "have",
+  "has",
+  "do",
+  "does",
+  "not",
+  "no",
+  "so",
+  "if",
+  "as",
+  "by",
+  "from",
+  "use",
+  "used",
+  "using",
+  "should",
+  "must",
+  "will",
+  "can",
+  "may",
+  "always",
+  "never",
+  "instead",
+  "ein",
+  "eine",
+  "der",
+  "die",
+  "das",
+  "und",
+  "oder",
+  "aber",
+  "zu",
+  "fuer",
+  "von",
+  "mit",
+  "ist",
+  "es",
+  "ich",
+  "wir",
+  "sie",
+  "nicht",
+  "kein",
+  "wie"
+]);
+function tokenize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !STOPWORDS.has(t));
 }
-function getSession(id) {
+function computeTF(tokens) {
+  const tf = /* @__PURE__ */ new Map();
+  for (const t of tokens)
+    tf.set(t, (tf.get(t) ?? 0) + 1);
+  const total = tokens.length || 1;
+  for (const [k, v] of tf)
+    tf.set(k, v / total);
+  return tf;
+}
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (const [k, v] of a) {
+    dot += v * (b.get(k) ?? 0);
+    normA += v * v;
+  }
+  for (const v of b.values())
+    normB += v * v;
+  if (normA === 0 || normB === 0)
+    return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+function findSimilar(query, corpus, threshold = (() => {
+  const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? "0.85");
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85;
+})()) {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0)
+    return [];
+  const allDocs = [...corpus.map((c) => tokenize(c.text)), queryTokens];
+  const N = allDocs.length;
+  const df = /* @__PURE__ */ new Map();
+  for (const doc of allDocs) {
+    for (const t of new Set(doc))
+      df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const idf = (term) => Math.log((N + 1) / ((df.get(term) ?? 0) + 1));
+  function tfidfVec(tokens) {
+    const tf = computeTF(tokens);
+    const vec = /* @__PURE__ */ new Map();
+    for (const [t, tfVal] of tf)
+      vec.set(t, tfVal * idf(t));
+    return vec;
+  }
+  const queryVec = tfidfVec(queryTokens);
+  const results = [];
+  for (const entry of corpus) {
+    const score = cosineSimilarity(queryVec, tfidfVec(tokenize(entry.text)));
+    if (score >= threshold)
+      results.push({ id: entry.id, score });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// dist/modules/decisions.js
+function addDecision(input) {
   const db2 = getDb();
-  const row = db2.prepare("SELECT * FROM sessions WHERE id = ?").get(id);
+  const existing = db2.prepare("SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200").all();
+  const corpus = existing.map((e) => ({ id: e.id, text: e.title + " " + e.reasoning }));
+  const similar = findSimilar(input.title + " " + input.reasoning, corpus);
+  const result = db2.prepare(`
+    INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? "high");
+  const insertedId = Number(result.lastInsertRowid);
+  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("decision", insertedId, { title: input.title, reasoning: input.reasoning })).catch(() => {
+  });
+  const decision = getDecision(insertedId);
+  if (similar.length > 0) {
+    const top = similar[0];
+    const topEntry = existing.find((e) => e.id === top.id);
+    return {
+      decision,
+      duplicate: {
+        id: top.id,
+        score: Math.round(top.score * 100),
+        title: topEntry?.title ?? ""
+      }
+    };
+  }
+  return { decision };
+}
+function getDecision(id) {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
   if (!row)
     return null;
+  db2.prepare("UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
   return {
     ...row,
-    key_changes: parseJson(row.key_changes),
-    tags: parseJson(row.tags)
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
   };
 }
-function updateSession(id, input) {
+function listDecisions(options = {}) {
   const db2 = getDb();
-  const sets = [];
-  const values = [];
-  if (input.ended_at !== void 0) {
-    sets.push("ended_at = ?");
-    values.push(input.ended_at);
-  }
-  if (input.duration_seconds !== void 0) {
-    sets.push("duration_seconds = ?");
-    values.push(input.duration_seconds);
-  }
-  if (input.summary !== void 0) {
-    sets.push("summary = ?");
-    values.push(input.summary);
-  }
-  if (input.key_changes !== void 0) {
-    sets.push("key_changes = ?");
-    values.push(toJson(input.key_changes));
-  }
-  if (input.chain_id !== void 0) {
-    sets.push("chain_id = ?");
-    values.push(input.chain_id);
-  }
-  if (input.chain_label !== void 0) {
-    sets.push("chain_label = ?");
-    values.push(input.chain_label);
-  }
-  if (input.status !== void 0) {
-    sets.push("status = ?");
-    values.push(input.status);
-  }
-  if (sets.length === 0)
-    return getSession(id);
-  values.push(id);
-  db2.prepare(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-  if (input.summary) {
-    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("session", id, { summary: input.summary, key_changes: input.key_changes ? JSON.stringify(input.key_changes) : "" })).catch(() => {
-    });
-  }
-  return getSession(id);
-}
-function listSessions(limit = 20, chainId) {
-  const db2 = getDb();
-  let sql = "SELECT * FROM sessions";
+  const conditions = [];
   const params = [];
-  if (chainId) {
-    sql += " WHERE chain_id = ?";
-    params.push(chainId);
+  conditions.push("archived_at IS NULL");
+  if (options.category) {
+    conditions.push("category = ?");
+    params.push(options.category);
   }
-  sql += " ORDER BY started_at DESC LIMIT ?";
-  params.push(limit);
+  if (!options.includeSuperseded) {
+    conditions.push("superseded_by IS NULL");
+  }
+  let sql = "SELECT * FROM decisions";
+  if (conditions.length > 0) {
+    sql += " WHERE " + conditions.join(" AND ");
+  }
+  sql += " ORDER BY created_at DESC LIMIT ?";
+  params.push(options.limit ?? 20);
   const rows = db2.prepare(sql).all(...params);
   return rows.map((row) => ({
     ...row,
-    key_changes: parseJson(row.key_changes),
-    tags: parseJson(row.tags)
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
   }));
 }
-function getRecentSummaries(limit = 3) {
+function runDecisionsPruning() {
   const db2 = getDb();
-  return db2.prepare(`
-    SELECT id, started_at, summary FROM sessions
-    WHERE status != 'active'
-    ORDER BY started_at DESC
-    LIMIT ?
-  `).all(limit);
+  const result = db2.prepare(`
+    UPDATE decisions
+    SET archived_at = ?
+    WHERE archived_at IS NULL
+      AND superseded_by IS NULL
+      AND (
+        (created_at < datetime('now', '-90 days') AND access_count = 0)
+        OR
+        (created_at < datetime('now', '-365 days') AND access_count < 3)
+      )
+  `).run(now());
+  return { decisions_archived: Number(result.changes) };
+}
+function getDecisionsForFile(filePath) {
+  const db2 = getDb();
+  const rows = db2.prepare(`
+    SELECT * FROM decisions
+    WHERE files_affected LIKE ?
+    AND superseded_by IS NULL
+    ORDER BY created_at DESC
+  `).all(`%${filePath}%`);
+  return rows.map((row) => ({
+    ...row,
+    alternatives: parseJson(row.alternatives),
+    files_affected: parseJson(row.files_affected)
+  }));
 }
 
 // dist/modules/errors.js
@@ -30488,27 +31260,19 @@ function listErrors(options = {}) {
 }
 function getErrorsForFiles(filePaths) {
   const db2 = getDb();
-  const results = [];
-  for (const filePath of filePaths) {
-    const rows = db2.prepare(`
-      SELECT * FROM errors
-      WHERE files_involved LIKE ?
-      ORDER BY occurrences DESC
-    `).all(`%${filePath}%`);
-    for (const row of rows) {
-      results.push({
-        ...row,
-        files_involved: parseJson(row.files_involved)
-      });
-    }
-  }
-  const seen = /* @__PURE__ */ new Set();
-  return results.filter((e) => {
-    if (seen.has(e.id))
-      return false;
-    seen.add(e.id);
-    return true;
-  });
+  if (filePaths.length === 0)
+    return [];
+  const where = filePaths.map(() => "files_involved LIKE ?").join(" OR ");
+  const params = filePaths.map((fp) => `%${fp}%`);
+  const rows = db2.prepare(`
+    SELECT * FROM errors
+    WHERE ${where}
+    ORDER BY occurrences DESC
+  `).all(...params);
+  return rows.map((row) => ({
+    ...row,
+    files_involved: parseJson(row.files_involved)
+  }));
 }
 function updateError(input) {
   const db2 = getDb();
@@ -30554,144 +31318,14 @@ function runErrorsPruning() {
   `).run(now());
   return { errors_archived: Number(result.changes) };
 }
-function getPreventionRules() {
-  const db2 = getDb();
-  return db2.prepare(`
-    SELECT id, prevention_rule, error_message FROM errors
-    WHERE prevention_rule IS NOT NULL
-  `).all();
-}
 
 // dist/modules/learnings.js
 init_db();
-
-// dist/utils/similarity.js
-var STOPWORDS = /* @__PURE__ */ new Set([
-  "a",
-  "an",
-  "the",
-  "and",
-  "or",
-  "but",
-  "in",
-  "on",
-  "at",
-  "to",
-  "for",
-  "of",
-  "with",
-  "is",
-  "it",
-  "this",
-  "that",
-  "are",
-  "was",
-  "be",
-  "have",
-  "has",
-  "do",
-  "does",
-  "not",
-  "no",
-  "so",
-  "if",
-  "as",
-  "by",
-  "from",
-  "use",
-  "used",
-  "using",
-  "should",
-  "must",
-  "will",
-  "can",
-  "may",
-  "always",
-  "never",
-  "instead",
-  "ein",
-  "eine",
-  "der",
-  "die",
-  "das",
-  "und",
-  "oder",
-  "aber",
-  "zu",
-  "fuer",
-  "von",
-  "mit",
-  "ist",
-  "es",
-  "ich",
-  "wir",
-  "sie",
-  "nicht",
-  "kein",
-  "wie"
-]);
-function tokenize(text) {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !STOPWORDS.has(t));
-}
-function computeTF(tokens) {
-  const tf = /* @__PURE__ */ new Map();
-  for (const t of tokens)
-    tf.set(t, (tf.get(t) ?? 0) + 1);
-  const total = tokens.length || 1;
-  for (const [k, v] of tf)
-    tf.set(k, v / total);
-  return tf;
-}
-function cosineSimilarity2(a, b) {
-  let dot = 0, normA = 0, normB = 0;
-  for (const [k, v] of a) {
-    dot += v * (b.get(k) ?? 0);
-    normA += v * v;
-  }
-  for (const v of b.values())
-    normB += v * v;
-  if (normA === 0 || normB === 0)
-    return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-function findSimilar2(query, corpus, threshold = (() => {
-  const v = parseFloat(process.env.CORTEX_SIMILARITY_THRESHOLD ?? "0.85");
-  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.85;
-})()) {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0)
-    return [];
-  const allDocs = [...corpus.map((c) => tokenize(c.text)), queryTokens];
-  const N = allDocs.length;
-  const df = /* @__PURE__ */ new Map();
-  for (const doc of allDocs) {
-    for (const t of new Set(doc))
-      df.set(t, (df.get(t) ?? 0) + 1);
-  }
-  const idf = (term) => Math.log((N + 1) / ((df.get(term) ?? 0) + 1));
-  function tfidfVec(tokens) {
-    const tf = computeTF(tokens);
-    const vec = /* @__PURE__ */ new Map();
-    for (const [t, tfVal] of tf)
-      vec.set(t, tfVal * idf(t));
-    return vec;
-  }
-  const queryVec = tfidfVec(queryTokens);
-  const results = [];
-  for (const entry of corpus) {
-    const score = cosineSimilarity2(queryVec, tfidfVec(tokenize(entry.text)));
-    if (score >= threshold)
-      results.push({ id: entry.id, score });
-  }
-  return results.sort((a, b) => b.score - a.score);
-}
-
-// dist/modules/learnings.js
 function addLearning(input) {
   const db2 = getDb();
   const existing = db2.prepare("SELECT id, anti_pattern, correct_pattern FROM learnings WHERE archived_at IS NULL LIMIT 500").all();
   const corpus = existing.map((e) => ({ id: e.id, text: e.anti_pattern + " " + e.correct_pattern }));
-  const similar = findSimilar2(input.anti_pattern + " " + input.correct_pattern, corpus);
+  const similar = findSimilar(input.anti_pattern + " " + input.correct_pattern, corpus);
   const result = db2.prepare(`
     INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, detection_regex, context, severity, auto_block, confidence)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.7)
@@ -30746,76 +31380,6 @@ function listLearnings(options = {}) {
   const rows = db2.prepare(sql).all(...params);
   return rows.map((row) => ({ ...row, auto_block: Boolean(row.auto_block) }));
 }
-function getAutoBlockLearnings() {
-  const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM learnings WHERE auto_block = 1 AND archived_at IS NULL").all();
-  return rows.map((row) => ({ ...row, auto_block: true }));
-}
-function updateLearning(input) {
-  const db2 = getDb();
-  const sets = [];
-  const values = [];
-  if (input.anti_pattern !== void 0) {
-    sets.push("anti_pattern = ?");
-    values.push(input.anti_pattern);
-  }
-  if (input.correct_pattern !== void 0) {
-    sets.push("correct_pattern = ?");
-    values.push(input.correct_pattern);
-  }
-  if ("detection_regex" in input) {
-    sets.push("detection_regex = ?");
-    values.push(input.detection_regex ?? null);
-  }
-  if (input.context !== void 0) {
-    sets.push("context = ?");
-    values.push(input.context);
-  }
-  if (input.severity !== void 0) {
-    sets.push("severity = ?");
-    values.push(input.severity);
-  }
-  if (input.auto_block !== void 0) {
-    sets.push("auto_block = ?");
-    values.push(input.auto_block ? 1 : 0);
-  }
-  if (input.confidence !== void 0) {
-    sets.push("confidence = ?");
-    values.push(input.confidence);
-  }
-  if (sets.length === 0)
-    return getLearning(input.id);
-  values.push(input.id);
-  db2.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-  return getLearning(input.id);
-}
-function deleteLearning(id) {
-  const db2 = getDb();
-  const result = db2.prepare("DELETE FROM learnings WHERE id = ?").run(id);
-  return result.changes > 0;
-}
-function incrementLearningOccurrence(id) {
-  const db2 = getDb();
-  db2.prepare("UPDATE learnings SET occurrences = occurrences + 1 WHERE id = ?").run(id);
-}
-function checkContentAgainstLearnings(content) {
-  const learnings = getAutoBlockLearnings();
-  const matches = [];
-  for (const learning of learnings) {
-    if (!learning.detection_regex)
-      continue;
-    try {
-      const regex = new RegExp(learning.detection_regex, "gm");
-      const m = regex.test(content);
-      if (m) {
-        matches.push({ learning, match: learning.detection_regex });
-        incrementLearningOccurrence(learning.id);
-      }
-    } catch {
-    }
-  }
-  return matches;
-}
 function runLearningsPruning() {
   const db2 = getDb();
   const result = db2.prepare(`
@@ -30836,27 +31400,89 @@ function runLearningsPruning() {
 init_db();
 function addUnfinished(input) {
   const db2 = getDb();
-  const result = db2.prepare(`
-    INSERT INTO unfinished (session_id, created_at, description, context, priority)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(input.session_id ?? null, now(), input.description, input.context ?? null, input.priority ?? "medium");
-  const insertedId = Number(result.lastInsertRowid);
-  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("todo", insertedId, { description: input.description, context: input.context })).catch(() => {
-  });
-  return getUnfinished(insertedId);
+  const blockedBy = normalizeBlockedBy(input.blocked_by);
+  const warnings = [];
+  db2.exec("BEGIN");
+  try {
+    const result = db2.prepare(`
+      INSERT INTO unfinished (session_id, created_at, description, context, priority, blocked_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(input.session_id ?? null, now(), input.description, input.context ?? null, input.priority ?? "medium", blockedBy.length > 0 ? JSON.stringify(blockedBy) : null);
+    const insertedId = Number(result.lastInsertRowid);
+    if (blockedBy.includes(insertedId)) {
+      throw new Error(`Self-dependency: item ${insertedId} cannot block itself`);
+    }
+    if (blockedBy.length > 0) {
+      const existsStmt = db2.prepare("SELECT id FROM unfinished WHERE id = ? AND resolved_at IS NULL");
+      const depBlockedByStmt = db2.prepare("SELECT blocked_by FROM unfinished WHERE id = ? AND resolved_at IS NULL");
+      for (const depId of blockedBy) {
+        const exists = existsStmt.get(depId);
+        if (!exists) {
+          warnings.push(`Dependency #${depId} not found or already resolved`);
+          continue;
+        }
+        const dep = depBlockedByStmt.get(depId);
+        if (!dep?.blocked_by || !isValidBlockedByJson(dep.blocked_by))
+          continue;
+        const depBlockedBy = parseBlockedBy(dep.blocked_by);
+        if (depBlockedBy.includes(insertedId)) {
+          warnings.push(`Cycle detected: #${insertedId} <-> #${depId}`);
+        }
+      }
+    }
+    db2.exec("COMMIT");
+    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("todo", insertedId, { description: input.description, context: input.context })).catch(() => {
+    });
+    return {
+      item: getUnfinished(insertedId),
+      warnings
+    };
+  } catch (error48) {
+    try {
+      db2.exec("ROLLBACK");
+    } catch {
+    }
+    throw error48;
+  }
 }
 function getUnfinished(id) {
   const db2 = getDb();
-  return db2.prepare("SELECT * FROM unfinished WHERE id = ?").get(id) ?? null;
+  const row = db2.prepare("SELECT * FROM unfinished WHERE id = ?").get(id);
+  return row ?? null;
 }
 function listUnfinished(options = {}) {
   const db2 = getDb();
   let sql = "SELECT * FROM unfinished";
+  const where = [];
   const params = [];
   if (!options.includeResolved) {
-    sql += " WHERE resolved_at IS NULL";
+    where.push("resolved_at IS NULL");
   }
-  sql += " ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, created_at DESC LIMIT ?";
+  if (options.filter === "actionable") {
+    if (options.includeResolved) {
+      throw new Error('filter="actionable" cannot be combined with includeResolved=true');
+    }
+    where.push(`
+      (
+        blocked_by IS NULL
+        OR blocked_by = ''
+        OR (
+          json_valid(blocked_by) = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(blocked_by) AS dep
+            WHERE CAST(dep.value AS INTEGER) IN (
+              SELECT id FROM unfinished WHERE resolved_at IS NULL
+            )
+          )
+        )
+      )
+    `);
+  }
+  if (where.length > 0) {
+    sql += ` WHERE ${where.join(" AND ")}`;
+  }
+  sql += " ORDER BY COALESCE(priority_score, 50) DESC, CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, created_at DESC LIMIT ?";
   params.push(options.limit ?? 50);
   return db2.prepare(sql).all(...params);
 }
@@ -30865,43 +31491,363 @@ function resolveUnfinished(id, resolvedSession) {
   db2.prepare(`
     UPDATE unfinished SET resolved_at = ?, resolved_session = ? WHERE id = ?
   `).run(now(), resolvedSession ?? null, id);
-  return db2.prepare("SELECT * FROM unfinished WHERE id = ?").get(id);
+  const item = getUnfinished(id);
+  const newlyUnblocked = db2.prepare(`
+    SELECT id, description
+    FROM unfinished
+    WHERE resolved_at IS NULL
+      AND blocked_by IS NOT NULL
+      AND blocked_by != ''
+      AND json_valid(blocked_by) = 1
+      AND EXISTS (
+        SELECT 1
+        FROM json_each(blocked_by) AS dep
+        WHERE CAST(dep.value AS INTEGER) = ?
+      )
+    ORDER BY COALESCE(priority_score, 50) DESC, created_at DESC
+  `).all(id);
+  return { item, newly_unblocked: newlyUnblocked };
+}
+function normalizeBlockedBy(blockedBy) {
+  if (!blockedBy || blockedBy.length === 0)
+    return [];
+  if (!Array.isArray(blockedBy) || !blockedBy.every((id) => Number.isInteger(id) && id > 0)) {
+    throw new Error("blocked_by must be an array of positive integers");
+  }
+  return [...new Set(blockedBy)];
+}
+function parseBlockedBy(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed))
+      return [];
+    return parsed.filter((id) => Number.isInteger(id) && id > 0);
+  } catch {
+    return [];
+  }
+}
+function isValidBlockedByJson(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+// dist/modules/sessions.js
+init_db();
+function createSession(input) {
+  const db2 = getDb();
+  const startedAt = input.started_at ?? now();
+  db2.prepare(`
+    INSERT OR IGNORE INTO sessions (id, started_at, status)
+    VALUES (?, ?, 'active')
+  `).run(input.id, startedAt);
+  return getSession(input.id);
+}
+function getSession(id) {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT * FROM sessions WHERE id = ?").get(id);
+  if (!row)
+    return null;
+  return {
+    ...row,
+    key_changes: parseJson(row.key_changes),
+    tags: parseJson(row.tags)
+  };
+}
+function updateSession(id, input) {
+  const db2 = getDb();
+  const sets = [];
+  const values = [];
+  if (input.ended_at !== void 0) {
+    sets.push("ended_at = ?");
+    values.push(input.ended_at);
+  }
+  if (input.duration_seconds !== void 0) {
+    sets.push("duration_seconds = ?");
+    values.push(input.duration_seconds);
+  }
+  if (input.summary !== void 0) {
+    sets.push("summary = ?");
+    values.push(input.summary);
+  }
+  if (input.key_changes !== void 0) {
+    sets.push("key_changes = ?");
+    values.push(toJson(input.key_changes));
+  }
+  if (input.chain_id !== void 0) {
+    sets.push("chain_id = ?");
+    values.push(input.chain_id);
+  }
+  if (input.chain_label !== void 0) {
+    sets.push("chain_label = ?");
+    values.push(input.chain_label);
+  }
+  if (input.status !== void 0) {
+    sets.push("status = ?");
+    values.push(input.status);
+  }
+  if (sets.length === 0)
+    return getSession(id);
+  values.push(id);
+  db2.prepare(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  if (input.summary) {
+    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("session", id, { summary: input.summary, key_changes: input.key_changes ? JSON.stringify(input.key_changes) : "" })).catch(() => {
+    });
+  }
+  return getSession(id);
+}
+function getRecentSummaries(limit = 3) {
+  const db2 = getDb();
+  return db2.prepare(`
+    SELECT id, started_at, summary FROM sessions
+    WHERE status != 'active'
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+// dist/modules/search.js
+init_db();
+var FTS_CONFIGS = [
+  {
+    type: "learning",
+    ftsTable: "learnings_fts",
+    sourceTable: "learnings",
+    joinColumn: "id",
+    titleFn: (r) => r.anti_pattern,
+    snippetColumns: ["anti_pattern", "correct_pattern", "context"],
+    metadataFn: (r) => ({ severity: r.severity, auto_block: Boolean(r.auto_block) }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "decision",
+    ftsTable: "decisions_fts",
+    sourceTable: "decisions",
+    joinColumn: "id",
+    titleFn: (r) => r.title,
+    snippetColumns: ["title", "reasoning"],
+    metadataFn: (r) => ({ category: r.category, confidence: r.confidence }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "error",
+    ftsTable: "errors_fts",
+    sourceTable: "errors",
+    joinColumn: "id",
+    titleFn: (r) => r.error_message,
+    snippetColumns: ["error_message", "root_cause", "fix_description"],
+    metadataFn: (r) => ({ severity: r.severity, occurrences: r.occurrences }),
+    createdAtColumn: "first_seen"
+  },
+  {
+    type: "note",
+    ftsTable: "notes_fts",
+    sourceTable: "notes",
+    joinColumn: "id",
+    titleFn: (r) => String(r.text).slice(0, 80),
+    snippetColumns: ["text"],
+    metadataFn: (r) => ({ tags: r.tags }),
+    createdAtColumn: "created_at"
+  },
+  {
+    type: "session",
+    ftsTable: "sessions_fts",
+    sourceTable: "sessions",
+    joinColumn: "rowid",
+    titleFn: (r) => r.summary ? String(r.summary).slice(0, 80) : r.id,
+    snippetColumns: ["summary", "key_changes"],
+    metadataFn: (r) => ({ status: r.status }),
+    createdAtColumn: "started_at"
+  },
+  {
+    type: "todo",
+    ftsTable: "unfinished_fts",
+    sourceTable: "unfinished",
+    joinColumn: "id",
+    titleFn: (r) => String(r.description).slice(0, 80),
+    snippetColumns: ["description", "context"],
+    metadataFn: (r) => ({ priority: r.priority }),
+    createdAtColumn: "created_at"
+  }
+];
+function searchBm25(query, limit = 15) {
+  const db2 = getDb();
+  const allResults = [];
+  for (const cfg of FTS_CONFIGS) {
+    try {
+      const rows = db2.prepare(`
+        SELECT s.*, bm25(${cfg.ftsTable}) as bm25_score
+        FROM ${cfg.sourceTable} s
+        JOIN ${cfg.ftsTable} fts ON s.${cfg.joinColumn} = fts.rowid
+        WHERE ${cfg.ftsTable} MATCH ?
+        ORDER BY bm25(${cfg.ftsTable})
+        LIMIT ?
+      `).all(query, limit);
+      for (const row of rows) {
+        allResults.push({
+          type: cfg.type,
+          id: row.id,
+          score: -row.bm25_score,
+          // flip to positive (higher = better)
+          title: cfg.titleFn(row),
+          snippet: buildSnippet(row, cfg.snippetColumns, query),
+          created_at: row[cfg.createdAtColumn] ?? null,
+          metadata: cfg.metadataFn(row)
+        });
+      }
+    } catch {
+    }
+  }
+  allResults.sort((a, b) => b.score - a.score);
+  return allResults.slice(0, limit);
+}
+var RRF_K = 60;
+var EMBEDDING_ONLY_THRESHOLD = (() => {
+  const parsed = Number.parseFloat(process.env.CORTEX_EMBEDDING_THRESHOLD ?? "0.28");
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1)
+    return parsed;
+  return 0.28;
+})();
+async function searchAll(query, limit = 15) {
+  const bm25Results = searchBm25(query, limit * 2);
+  let embResults = [];
+  try {
+    const { findSimilar: findSimilar3, isAvailable: isAvailable2 } = await Promise.resolve().then(() => (init_embeddings(), embeddings_exports));
+    if (isAvailable2()) {
+      embResults = await findSimilar3(query, limit * 2);
+    }
+  } catch {
+  }
+  if (embResults.length === 0) {
+    return bm25Results.slice(0, limit);
+  }
+  const rrfScores = /* @__PURE__ */ new Map();
+  for (let rank = 0; rank < bm25Results.length; rank++) {
+    const r = bm25Results[rank];
+    const key = `${r.type}:${r.id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    rrfScores.set(key, { score: rrfScore, result: r });
+  }
+  for (let rank = 0; rank < embResults.length; rank++) {
+    const e = embResults[rank];
+    const key = `${e.entity_type}:${e.entity_id}`;
+    const rrfScore = 1 / (RRF_K + rank + 1);
+    const existing = rrfScores.get(key);
+    if (existing) {
+      existing.score += rrfScore;
+    } else if (e.score >= EMBEDDING_ONLY_THRESHOLD) {
+      const resolved = resolveEntity(e.entity_type, e.entity_id, query);
+      if (resolved) {
+        rrfScores.set(key, { score: rrfScore, result: resolved });
+      }
+    }
+  }
+  const fused = Array.from(rrfScores.values()).filter((v) => v.result != null).map((v) => ({ ...v.result, score: v.score })).sort((a, b) => b.score - a.score);
+  return fused.slice(0, limit);
+}
+function resolveEntity(entityType, entityId, query) {
+  const db2 = getDb();
+  const cfg = FTS_CONFIGS.find((c) => c.type === entityType);
+  if (!cfg)
+    return null;
+  try {
+    const idColumn = entityType === "session" ? "id" : cfg.joinColumn === "rowid" ? "rowid" : "id";
+    const idValue = entityType === "session" ? entityId : Number(entityId);
+    const row = db2.prepare(`SELECT * FROM ${cfg.sourceTable} WHERE ${idColumn} = ?`).get(idValue);
+    if (!row)
+      return null;
+    return {
+      type: cfg.type,
+      id: row.id ?? entityId,
+      score: 0,
+      title: cfg.titleFn(row),
+      snippet: buildSnippet(row, cfg.snippetColumns, query),
+      created_at: row[cfg.createdAtColumn] ?? null,
+      metadata: cfg.metadataFn(row)
+    };
+  } catch {
+    return null;
+  }
+}
+function buildSnippet(row, columns, query) {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  let bestSnippet = "";
+  let bestScore = -1;
+  for (const col of columns) {
+    const value = row[col];
+    if (!value || typeof value !== "string")
+      continue;
+    const lower = value.toLowerCase();
+    const matchCount = queryTerms.filter((t) => lower.includes(t)).length;
+    if (matchCount > bestScore) {
+      bestScore = matchCount;
+      bestSnippet = extractContext(value, queryTerms, 150);
+    }
+  }
+  return bestSnippet || "(no snippet)";
+}
+function extractContext(text, terms, maxLen) {
+  const lower = text.toLowerCase();
+  let firstMatch = text.length;
+  for (const t of terms) {
+    const idx = lower.indexOf(t);
+    if (idx >= 0 && idx < firstMatch)
+      firstMatch = idx;
+  }
+  if (firstMatch === text.length) {
+    return text.length <= maxLen ? text : text.slice(0, maxLen) + "...";
+  }
+  const start = Math.max(0, firstMatch - 30);
+  const end = Math.min(text.length, start + maxLen);
+  let snippet = text.slice(start, end);
+  if (start > 0)
+    snippet = "..." + snippet;
+  if (end < text.length)
+    snippet = snippet + "...";
+  return snippet;
+}
+function formatResults(results) {
+  if (results.length === 0)
+    return "No results.";
+  return results.map((r, i) => {
+    const typeTag = `[${r.type.toUpperCase()}]`;
+    const scoreTag = `(score: ${r.score.toFixed(2)})`;
+    const age = r.created_at ? formatAge(r.created_at) : "";
+    const meta3 = formatMeta(r);
+    return `${i + 1}. ${typeTag} ${r.title}
+   ${scoreTag} ${age}${meta3}
+   ${r.snippet}`;
+  }).join("\n\n");
+}
+function formatAge(dateStr) {
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(ms / 864e5);
+  if (days === 0)
+    return "today ";
+  if (days === 1)
+    return "1d ago ";
+  if (days < 7)
+    return `${days}d ago `;
+  if (days < 30)
+    return `${Math.floor(days / 7)}w ago `;
+  return `${Math.floor(days / 30)}mo ago `;
+}
+function formatMeta(r) {
+  const parts = [];
+  if (r.metadata.severity)
+    parts.push(`severity:${r.metadata.severity}`);
+  if (r.metadata.category)
+    parts.push(`cat:${r.metadata.category}`);
+  if (r.metadata.priority)
+    parts.push(`prio:${r.metadata.priority}`);
+  return parts.length > 0 ? `[${parts.join(", ")}] ` : "";
 }
 
 // dist/modules/health.js
 init_db();
-function calculateHealth() {
-  const db2 = getDb();
-  const openErrors = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE fix_description IS NULL").get().count;
-  const unresolvedUnfinished = db2.prepare("SELECT COUNT(*) as count FROM unfinished WHERE resolved_at IS NULL").get().count;
-  const conventionViolations = db2.prepare("SELECT SUM(violation_count) as total FROM conventions").get().total ?? 0;
-  const hotZoneCount = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE change_count > 20").get().count;
-  const avgChange = db2.prepare("SELECT AVG(change_count) as avg FROM project_files WHERE change_count > 0").get().avg ?? 0;
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString();
-  const recentBugs = db2.prepare("SELECT COUNT(*) as count FROM errors WHERE last_seen > ? AND fix_description IS NULL").get(weekAgo).count;
-  const totalFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files").get().count;
-  const typedFiles = db2.prepare("SELECT COUNT(*) as count FROM project_files WHERE file_type IS NOT NULL").get().count;
-  const docCoverage = totalFiles > 0 ? Math.round(typedFiles / totalFiles * 100) : 100;
-  return {
-    openErrors,
-    unresolvedUnfinished,
-    conventionViolations,
-    hotZoneCount,
-    avgChangeFrequency: Math.round(avgChange * 10) / 10,
-    recentBugRate: recentBugs,
-    documentationCoverage: docCoverage
-  };
-}
-function computeScore(metrics) {
-  let score = 100;
-  score -= metrics.openErrors * 5;
-  score -= metrics.unresolvedUnfinished * 2;
-  score -= Math.min(metrics.conventionViolations, 20);
-  score -= metrics.hotZoneCount * 2;
-  score -= metrics.recentBugRate * 3;
-  score += Math.round(metrics.documentationCoverage / 10);
-  return Math.max(0, Math.min(100, Math.round(score)));
-}
 function getLatestSnapshot() {
   const db2 = getDb();
   const row = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT 1").get();
@@ -30911,14 +31857,6 @@ function getLatestSnapshot() {
     ...row,
     metrics: JSON.parse(row.metrics)
   };
-}
-function getHealthHistory(limit = 30) {
-  const db2 = getDb();
-  const rows = db2.prepare("SELECT * FROM health_snapshots ORDER BY date DESC LIMIT ?").all(limit);
-  return rows.map((row) => ({
-    ...row,
-    metrics: JSON.parse(row.metrics)
-  }));
 }
 
 // dist/modules/project-map.js
@@ -31073,22 +32011,27 @@ var EXCLUDE_DIRS = /* @__PURE__ */ new Set([
 ]);
 function scanProject(rootPath) {
   const db2 = getDb();
-  const allFiles = collectFiles(rootPath);
+  const normalizedRoot = path2.resolve(rootPath);
+  const allFiles = collectFiles(normalizedRoot);
   let depsCount = 0;
+  const moduleIdCache = /* @__PURE__ */ new Map();
+  const deleteDepsStmt = db2.prepare("DELETE FROM dependencies WHERE source_file = ?");
+  const insertDepStmt = db2.prepare("INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)");
   db2.exec("BEGIN");
   try {
     for (const filePath of allFiles) {
-      const relativePath = filePath.replace(/\\/g, "/");
+      const relativePath = toRepoPath(path2.relative(normalizedRoot, filePath));
       const fileType = inferFileType(relativePath);
       const modulePath = inferModulePath(relativePath);
       if (modulePath) {
         const moduleName = modulePath.split("/").pop() ?? modulePath;
         const layer = inferLayer(relativePath);
-        upsertModule({ path: modulePath, name: moduleName, layer });
-        const mod = getModuleByPath(modulePath);
-        if (mod) {
-          upsertFile({ path: relativePath, module_id: mod.id, file_type: fileType ?? void 0 });
+        let moduleId = moduleIdCache.get(modulePath);
+        if (moduleId === void 0) {
+          moduleId = upsertModule({ path: modulePath, name: moduleName, layer }).id;
+          moduleIdCache.set(modulePath, moduleId);
         }
+        upsertFile({ path: relativePath, module_id: moduleId, file_type: fileType ?? void 0 });
       } else {
         upsertFile({ path: relativePath, file_type: fileType ?? void 0 });
       }
@@ -31097,10 +32040,9 @@ function scanProject(rootPath) {
         if (["ts", "tsx", "js", "jsx", "py"].includes(ext)) {
           const content = fs2.readFileSync(filePath, "utf-8");
           const imports = extractImports(content, ext);
-          db2.prepare("DELETE FROM dependencies WHERE source_file = ?").run(relativePath);
-          const stmt = db2.prepare("INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)");
+          deleteDepsStmt.run(relativePath);
           for (const imp of imports) {
-            stmt.run(relativePath, imp, "static");
+            insertDepStmt.run(relativePath, imp, "static");
             depsCount++;
           }
         }
@@ -31146,6 +32088,9 @@ function inferLayer(filePath) {
     return "tooling";
   return "other";
 }
+function toRepoPath(value) {
+  return value.replace(/\\/g, "/");
+}
 function extractImports(content, ext) {
   const imports = [];
   if (["ts", "tsx", "js", "jsx"].includes(ext)) {
@@ -31166,329 +32111,71 @@ function extractImports(content, ext) {
   return imports;
 }
 
-// dist/modules/search.js
-init_db();
-var FTS_CONFIGS = [
-  {
-    type: "learning",
-    ftsTable: "learnings_fts",
-    sourceTable: "learnings",
-    joinColumn: "id",
-    titleFn: (r) => r.anti_pattern,
-    snippetColumns: ["anti_pattern", "correct_pattern", "context"],
-    metadataFn: (r) => ({ severity: r.severity, auto_block: Boolean(r.auto_block) }),
-    createdAtColumn: "created_at"
-  },
-  {
-    type: "decision",
-    ftsTable: "decisions_fts",
-    sourceTable: "decisions",
-    joinColumn: "id",
-    titleFn: (r) => r.title,
-    snippetColumns: ["title", "reasoning"],
-    metadataFn: (r) => ({ category: r.category, confidence: r.confidence }),
-    createdAtColumn: "created_at"
-  },
-  {
-    type: "error",
-    ftsTable: "errors_fts",
-    sourceTable: "errors",
-    joinColumn: "id",
-    titleFn: (r) => r.error_message,
-    snippetColumns: ["error_message", "root_cause", "fix_description"],
-    metadataFn: (r) => ({ severity: r.severity, occurrences: r.occurrences }),
-    createdAtColumn: "first_seen"
-  },
-  {
-    type: "note",
-    ftsTable: "notes_fts",
-    sourceTable: "notes",
-    joinColumn: "id",
-    titleFn: (r) => String(r.text).slice(0, 80),
-    snippetColumns: ["text"],
-    metadataFn: (r) => ({ tags: r.tags }),
-    createdAtColumn: "created_at"
-  },
-  {
-    type: "session",
-    ftsTable: "sessions_fts",
-    sourceTable: "sessions",
-    joinColumn: "rowid",
-    titleFn: (r) => r.summary ? String(r.summary).slice(0, 80) : r.id,
-    snippetColumns: ["summary", "key_changes"],
-    metadataFn: (r) => ({ status: r.status }),
-    createdAtColumn: "started_at"
-  },
-  {
-    type: "todo",
-    ftsTable: "unfinished_fts",
-    sourceTable: "unfinished",
-    joinColumn: "id",
-    titleFn: (r) => String(r.description).slice(0, 80),
-    snippetColumns: ["description", "context"],
-    metadataFn: (r) => ({ priority: r.priority }),
-    createdAtColumn: "created_at"
-  }
-];
-function searchBm25(query, limit = 15) {
-  const db2 = getDb();
-  const allResults = [];
-  for (const cfg of FTS_CONFIGS) {
-    try {
-      const rows = db2.prepare(`
-        SELECT s.*, bm25(${cfg.ftsTable}) as bm25_score
-        FROM ${cfg.sourceTable} s
-        JOIN ${cfg.ftsTable} fts ON s.${cfg.joinColumn} = fts.rowid
-        WHERE ${cfg.ftsTable} MATCH ?
-        ORDER BY bm25(${cfg.ftsTable})
-        LIMIT ?
-      `).all(query, limit);
-      for (const row of rows) {
-        allResults.push({
-          type: cfg.type,
-          id: row.id,
-          score: -row.bm25_score,
-          // flip to positive (higher = better)
-          title: cfg.titleFn(row),
-          snippet: buildSnippet(row, cfg.snippetColumns, query),
-          created_at: row[cfg.createdAtColumn] ?? null,
-          metadata: cfg.metadataFn(row)
-        });
-      }
-    } catch {
-    }
-  }
-  allResults.sort((a, b) => b.score - a.score);
-  return allResults.slice(0, limit);
-}
-var RRF_K = 60;
-async function searchAll(query, limit = 15) {
-  const bm25Results = searchBm25(query, limit * 2);
-  let embResults = [];
-  try {
-    const { findSimilar: findSimilar3, isAvailable: isAvailable2 } = await Promise.resolve().then(() => (init_embeddings(), embeddings_exports));
-    if (isAvailable2()) {
-      embResults = await findSimilar3(query, limit * 2);
-    }
-  } catch {
-  }
-  if (embResults.length === 0) {
-    return bm25Results.slice(0, limit);
-  }
-  const rrfScores = /* @__PURE__ */ new Map();
-  for (let rank = 0; rank < bm25Results.length; rank++) {
-    const r = bm25Results[rank];
-    const key = `${r.type}:${r.id}`;
-    const rrfScore = 1 / (RRF_K + rank + 1);
-    rrfScores.set(key, { score: rrfScore, result: r });
-  }
-  for (let rank = 0; rank < embResults.length; rank++) {
-    const e = embResults[rank];
-    const key = `${e.entity_type}:${e.entity_id}`;
-    const rrfScore = 1 / (RRF_K + rank + 1);
-    const existing = rrfScores.get(key);
-    if (existing) {
-      existing.score += rrfScore;
-    } else if (e.score > 0.4) {
-      const resolved = resolveEntity(e.entity_type, e.entity_id, query);
-      if (resolved) {
-        rrfScores.set(key, { score: rrfScore, result: resolved });
-      }
-    }
-  }
-  const fused = Array.from(rrfScores.values()).filter((v) => v.result != null).map((v) => ({ ...v.result, score: v.score })).sort((a, b) => b.score - a.score);
-  return fused.slice(0, limit);
-}
-function resolveEntity(entityType, entityId, query) {
-  const db2 = getDb();
-  const cfg = FTS_CONFIGS.find((c) => c.type === entityType);
-  if (!cfg)
-    return null;
-  try {
-    const row = db2.prepare(`SELECT * FROM ${cfg.sourceTable} WHERE ${cfg.joinColumn === "rowid" ? "rowid" : "id"} = ?`).get(entityType === "session" ? entityId : Number(entityId));
-    if (!row)
-      return null;
-    return {
-      type: cfg.type,
-      id: row.id ?? entityId,
-      score: 0,
-      title: cfg.titleFn(row),
-      snippet: buildSnippet(row, cfg.snippetColumns, query),
-      created_at: row[cfg.createdAtColumn] ?? null,
-      metadata: cfg.metadataFn(row)
-    };
-  } catch {
-    return null;
-  }
-}
-function buildSnippet(row, columns, query) {
-  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  let bestSnippet = "";
-  let bestScore = -1;
-  for (const col of columns) {
-    const value = row[col];
-    if (!value || typeof value !== "string")
-      continue;
-    const lower = value.toLowerCase();
-    const matchCount = queryTerms.filter((t) => lower.includes(t)).length;
-    if (matchCount > bestScore) {
-      bestScore = matchCount;
-      bestSnippet = extractContext(value, queryTerms, 150);
-    }
-  }
-  return bestSnippet || "(no snippet)";
-}
-function extractContext(text, terms, maxLen) {
-  const lower = text.toLowerCase();
-  let firstMatch = text.length;
-  for (const t of terms) {
-    const idx = lower.indexOf(t);
-    if (idx >= 0 && idx < firstMatch)
-      firstMatch = idx;
-  }
-  if (firstMatch === text.length) {
-    return text.length <= maxLen ? text : text.slice(0, maxLen) + "...";
-  }
-  const start = Math.max(0, firstMatch - 30);
-  const end = Math.min(text.length, start + maxLen);
-  let snippet = text.slice(start, end);
-  if (start > 0)
-    snippet = "..." + snippet;
-  if (end < text.length)
-    snippet = snippet + "...";
-  return snippet;
-}
-function formatResults(results) {
-  if (results.length === 0)
-    return "No results.";
-  return results.map((r, i) => {
-    const typeTag = `[${r.type.toUpperCase()}]`;
-    const scoreTag = `(score: ${r.score.toFixed(2)})`;
-    const age = r.created_at ? formatAge(r.created_at) : "";
-    const meta3 = formatMeta(r);
-    return `${i + 1}. ${typeTag} ${r.title}
-   ${scoreTag} ${age}${meta3}
-   ${r.snippet}`;
-  }).join("\n\n");
-}
-function formatAge(dateStr) {
-  const ms = Date.now() - new Date(dateStr).getTime();
-  const days = Math.floor(ms / 864e5);
-  if (days === 0)
-    return "today ";
-  if (days === 1)
-    return "1d ago ";
-  if (days < 7)
-    return `${days}d ago `;
-  if (days < 30)
-    return `${Math.floor(days / 7)}w ago `;
-  return `${Math.floor(days / 30)}mo ago `;
-}
-function formatMeta(r) {
-  const parts = [];
-  if (r.metadata.severity)
-    parts.push(`severity:${r.metadata.severity}`);
-  if (r.metadata.category)
-    parts.push(`cat:${r.metadata.category}`);
-  if (r.metadata.priority)
-    parts.push(`prio:${r.metadata.priority}`);
-  return parts.length > 0 ? `[${parts.join(", ")}] ` : "";
-}
+// dist/tools/core.js
+init_embed_hooks();
+init_embeddings();
 
-// dist/modules/decisions.js
-init_db();
-function addDecision(input) {
-  const db2 = getDb();
-  const existing = db2.prepare("SELECT id, title, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 200").all();
-  const corpus = existing.map((e) => ({ id: e.id, text: e.title + " " + e.reasoning }));
-  const similar = findSimilar2(input.title + " " + input.reasoning, corpus);
-  const result = db2.prepare(`
-    INSERT INTO decisions (session_id, created_at, category, title, reasoning, alternatives, files_affected, confidence)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(input.session_id ?? null, now(), input.category, input.title, input.reasoning, toJson(input.alternatives), toJson(input.files_affected), input.confidence ?? "high");
-  const insertedId = Number(result.lastInsertRowid);
-  Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("decision", insertedId, { title: input.title, reasoning: input.reasoning })).catch(() => {
-  });
-  const decision = getDecision(insertedId);
-  if (similar.length > 0) {
-    const top = similar[0];
-    const topEntry = existing.find((e) => e.id === top.id);
-    return {
-      decision,
-      duplicate: {
-        id: top.id,
-        score: Math.round(top.score * 100),
-        title: topEntry?.title ?? ""
-      }
-    };
-  }
-  return { decision };
+// dist/utils/gemini.js
+var GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+function getGeminiKey() {
+  return process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? null;
 }
-function getDecision(id) {
-  const db2 = getDb();
-  const row = db2.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
-  if (!row)
+function getGeminiModel() {
+  return process.env.CORTEX_GEMINI_MODEL ?? "gemini-1.5-flash";
+}
+function isGeminiAvailable() {
+  return Boolean(getGeminiKey());
+}
+async function summarizeWithGemini(input) {
+  const apiKey = getGeminiKey();
+  if (!apiKey)
     return null;
-  db2.prepare("UPDATE decisions SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(now(), id);
-  return {
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  };
-}
-function listDecisions(options = {}) {
-  const db2 = getDb();
-  const conditions = [];
-  const params = [];
-  conditions.push("archived_at IS NULL");
-  if (options.category) {
-    conditions.push("category = ?");
-    params.push(options.category);
+  const model = getGeminiModel();
+  const maxOutputTokens = input.maxOutputTokens ?? 600;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2e4);
+  try {
+    const response = await fetch(`${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: [
+                  `Task: ${input.title}`,
+                  "",
+                  "Create a concise technical summary in bullet points.",
+                  "Include key decisions, risks, and suggested next actions.",
+                  "",
+                  "Input:",
+                  input.text.slice(0, 12e4)
+                ].join("\n")
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens
+        }
+      })
+    });
+    if (!response.ok)
+      return null;
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n").trim();
+    return text || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!options.includeSuperseded) {
-    conditions.push("superseded_by IS NULL");
-  }
-  let sql = "SELECT * FROM decisions";
-  if (conditions.length > 0) {
-    sql += " WHERE " + conditions.join(" AND ");
-  }
-  sql += " ORDER BY created_at DESC LIMIT ?";
-  params.push(options.limit ?? 20);
-  const rows = db2.prepare(sql).all(...params);
-  return rows.map((row) => ({
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  }));
-}
-function runDecisionsPruning() {
-  const db2 = getDb();
-  const result = db2.prepare(`
-    UPDATE decisions
-    SET archived_at = ?
-    WHERE archived_at IS NULL
-      AND superseded_by IS NULL
-      AND (
-        (created_at < datetime('now', '-90 days') AND access_count = 0)
-        OR
-        (created_at < datetime('now', '-365 days') AND access_count < 3)
-      )
-  `).run(now());
-  return { decisions_archived: Number(result.changes) };
-}
-function getDecisionsForFile(filePath) {
-  const db2 = getDb();
-  const rows = db2.prepare(`
-    SELECT * FROM decisions
-    WHERE files_affected LIKE ?
-    AND superseded_by IS NULL
-    ORDER BY created_at DESC
-  `).all(`%${filePath}%`);
-  return rows.map((row) => ({
-    ...row,
-    alternatives: parseJson(row.alternatives),
-    files_affected: parseJson(row.files_affected)
-  }));
 }
 
 // dist/helpers.js
@@ -31503,9 +32190,837 @@ function runAllPruning() {
   };
 }
 
-// dist/tools/sessions.js
-function registerSessionTools(server2) {
-  server2.tool("cortex_save_session", "Save or update a session with summary, changes, decisions, errors, and learnings", {
+// dist/modules/decay.js
+init_db();
+function touchMemory(table, id) {
+  const db2 = getDb();
+  try {
+    db2.prepare(`
+      UPDATE ${table}
+      SET memory_strength = 1.0,
+          access_count = COALESCE(access_count, 0) + 1,
+          last_accessed = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  } catch {
+  }
+}
+
+// dist/modules/importance.js
+init_db();
+var WEIGHTS = {
+  frequency: 0.15,
+  recency: 0.25,
+  impact: 0.3,
+  surprise: 0.15,
+  sentiment: 0.15
+};
+var SENTIMENT_MAP = {
+  error: 0.8,
+  learning: 0.8,
+  decision: 0.6,
+  note: 0.3,
+  unfinished: 0.5
+};
+var surpriseCache = null;
+var surpriseCacheSessionId = null;
+function computeImportance(params) {
+  const { accessCount, lastAccessed, createdAt, priority, severity, entityType, sessionId } = params;
+  const frequency = Math.min((accessCount || 0) / 10, 1);
+  const refDate = lastAccessed || createdAt;
+  const daysSince = refDate ? Math.max(0, (Date.now() - new Date(refDate).getTime()) / 864e5) : 30;
+  const recency = Math.exp(-daysSince / 14);
+  const impactSource = priority || severity;
+  let impact = 0.5;
+  if (impactSource === "high" || impactSource === "critical")
+    impact = 1;
+  else if (impactSource === "medium")
+    impact = 0.6;
+  else if (impactSource === "low")
+    impact = 0.3;
+  const surprise = getSurprise(entityType, sessionId);
+  const sentiment = SENTIMENT_MAP[entityType] ?? 0.5;
+  const score = WEIGHTS.frequency * frequency + WEIGHTS.recency * recency + WEIGHTS.impact * impact + WEIGHTS.surprise * surprise + WEIGHTS.sentiment * sentiment;
+  return Math.round(score * 1e3) / 1e3;
+}
+function getSurprise(entityType, sessionId) {
+  if (surpriseCache && surpriseCacheSessionId === (sessionId || "")) {
+    return surpriseCache.get(entityType) ?? 0.5;
+  }
+  const db2 = getDb();
+  surpriseCache = /* @__PURE__ */ new Map();
+  surpriseCacheSessionId = sessionId || "";
+  const TABLE_MAP = {
+    decision: "decisions",
+    error: "errors",
+    learning: "learnings",
+    note: "notes",
+    unfinished: "unfinished"
+  };
+  let total = 0;
+  const counts = {};
+  for (const [type, table] of Object.entries(TABLE_MAP)) {
+    try {
+      const row = db2.prepare(`SELECT COUNT(*) as c FROM ${table} WHERE archived_at IS NULL`).get();
+      counts[type] = row.c;
+      total += row.c;
+    } catch {
+      counts[type] = 0;
+    }
+  }
+  for (const [type, count] of Object.entries(counts)) {
+    surpriseCache.set(type, total > 0 ? 1 - count / total : 0.5);
+  }
+  return surpriseCache.get(entityType) ?? 0.5;
+}
+
+// dist/modules/extractions.js
+init_db();
+function listExtractions(opts) {
+  const db2 = getDb();
+  const status = opts?.status ?? "pending";
+  const limit = opts?.limit ?? 50;
+  if (status === "all") {
+    return db2.prepare("SELECT * FROM auto_extractions ORDER BY created_at DESC LIMIT ?").all(limit);
+  }
+  return db2.prepare("SELECT * FROM auto_extractions WHERE status = ? ORDER BY confidence DESC, created_at DESC LIMIT ?").all(status, limit);
+}
+function promoteExtraction(id) {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT * FROM auto_extractions WHERE id = ?").get(id);
+  if (!row)
+    throw new Error(`Extraction #${id} not found`);
+  if (row.status !== "pending")
+    throw new Error(`Extraction #${id} is already ${row.status}`);
+  const ts = now();
+  let targetId = 0;
+  if (row.type === "decision") {
+    const result = db2.prepare(`INSERT INTO decisions (session_id, created_at, category, title, reasoning, confidence)
+       VALUES (?, ?, 'auto-extracted', ?, '[auto-extracted]', 'low')`).run(row.session_id, ts, row.content);
+    targetId = Number(result.lastInsertRowid);
+  } else if (row.type === "error") {
+    const sig = `auto-${id}-${Date.now()}`;
+    const result = db2.prepare(`INSERT INTO errors (session_id, first_seen, last_seen, error_signature, error_message, severity)
+       VALUES (?, ?, ?, ?, ?, 'medium')`).run(row.session_id, ts, ts, sig, row.content);
+    targetId = Number(result.lastInsertRowid);
+  } else if (row.type === "learning") {
+    const result = db2.prepare(`INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, context, confidence)
+       VALUES (?, ?, ?, '[auto-extracted]', 'auto-extracted from transcript', 0.4)`).run(row.session_id, ts, row.content);
+    targetId = Number(result.lastInsertRowid);
+  } else if (row.type === "convention") {
+    const result = db2.prepare(`INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, context, confidence)
+       VALUES (?, ?, ?, '[convention]', 'auto-extracted convention', 0.4)`).run(row.session_id, ts, row.content);
+    targetId = Number(result.lastInsertRowid);
+  } else {
+    throw new Error(`Unknown extraction type: ${row.type}`);
+  }
+  db2.prepare(`UPDATE auto_extractions SET status = 'promoted', promoted_to_type = ?, promoted_to_id = ? WHERE id = ?`).run(row.type === "convention" ? "learning" : row.type, targetId, id);
+  return { promoted: true, type: row.type, targetId };
+}
+function rejectExtraction(id) {
+  const db2 = getDb();
+  const row = db2.prepare("SELECT status FROM auto_extractions WHERE id = ?").get(id);
+  if (!row)
+    throw new Error(`Extraction #${id} not found`);
+  db2.prepare(`UPDATE auto_extractions SET status = 'rejected' WHERE id = ?`).run(id);
+}
+
+// dist/modules/associations.js
+init_db();
+init_embeddings();
+function createAssociation(params) {
+  const db2 = getDb();
+  const { sourceType, sourceId, targetType, targetId, relation, strength } = params;
+  if (sourceType === targetType && sourceId === targetId)
+    return;
+  try {
+    db2.prepare(`
+      INSERT OR IGNORE INTO memory_associations
+        (source_type, source_id, target_type, target_id, relation, strength)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(sourceType, sourceId, targetType, targetId, relation, strength ?? 1);
+  } catch {
+  }
+}
+function getNeighbors(entityType, entityId) {
+  const db2 = getDb();
+  try {
+    const rows = db2.prepare(`
+      SELECT target_type as type, target_id as id, relation, strength
+      FROM memory_associations
+      WHERE source_type = ? AND source_id = ?
+      UNION ALL
+      SELECT source_type as type, source_id as id, relation, strength
+      FROM memory_associations
+      WHERE target_type = ? AND target_id = ?
+    `).all(entityType, entityId, entityType, entityId);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+function autoCreateAssociations(params) {
+  const db2 = getDb();
+  const { entityType, entityId, sessionId, files } = params;
+  let created = 0;
+  if (sessionId) {
+    const TABLE_MAP = {
+      decision: "decisions",
+      error: "errors",
+      learning: "learnings",
+      note: "notes",
+      unfinished: "unfinished"
+    };
+    for (const [type, table] of Object.entries(TABLE_MAP)) {
+      if (type === entityType)
+        continue;
+      try {
+        const rows = db2.prepare(`
+          SELECT id FROM ${table}
+          WHERE session_id = ? AND archived_at IS NULL
+          ORDER BY id DESC LIMIT 5
+        `).all(sessionId);
+        for (const row of rows) {
+          createAssociation({
+            sourceType: entityType,
+            sourceId: entityId,
+            targetType: type,
+            targetId: row.id,
+            relation: "same-session",
+            strength: 0.6
+          });
+          created++;
+        }
+      } catch {
+      }
+    }
+    const ownTable = TABLE_MAP[entityType];
+    if (ownTable) {
+      try {
+        const rows = db2.prepare(`
+          SELECT id FROM ${ownTable}
+          WHERE session_id = ? AND id != ? AND archived_at IS NULL
+          ORDER BY id DESC LIMIT 3
+        `).all(sessionId, entityId);
+        for (const row of rows) {
+          createAssociation({
+            sourceType: entityType,
+            sourceId: entityId,
+            targetType: entityType,
+            targetId: row.id,
+            relation: "same-session",
+            strength: 0.5
+          });
+          created++;
+        }
+      } catch {
+      }
+    }
+  }
+  {
+    const TABLE_MAP_TEMPORAL = {
+      decision: "decisions",
+      error: "errors",
+      learning: "learnings",
+      note: "notes",
+      unfinished: "unfinished"
+    };
+    const dateColMap = {
+      decisions: "created_at",
+      errors: "first_seen",
+      learnings: "created_at",
+      notes: "created_at",
+      unfinished: "created_at"
+    };
+    for (const [type, table] of Object.entries(TABLE_MAP_TEMPORAL)) {
+      try {
+        const dateCol = dateColMap[table];
+        const idExclude = type === entityType ? entityId : -1;
+        const rows = db2.prepare(`
+          SELECT id FROM ${table}
+          WHERE archived_at IS NULL
+            AND id != ?
+            AND abs(strftime('%s', ${dateCol}) - strftime('%s', 'now')) < 300
+          ORDER BY ${dateCol} DESC LIMIT 5
+        `).all(idExclude);
+        for (const row of rows) {
+          if (type === entityType && row.id === entityId)
+            continue;
+          createAssociation({
+            sourceType: entityType,
+            sourceId: entityId,
+            targetType: type,
+            targetId: row.id,
+            relation: "temporal",
+            strength: 1
+          });
+          created++;
+        }
+      } catch {
+      }
+    }
+  }
+  if (files && files.length > 0) {
+    for (const file2 of files.slice(0, 3)) {
+      try {
+        const rows = db2.prepare(`
+          SELECT id FROM errors
+          WHERE files_involved LIKE ? AND archived_at IS NULL AND id != ?
+          ORDER BY last_seen DESC LIMIT 3
+        `).all(`%${file2}%`, entityType === "error" ? entityId : -1);
+        for (const row of rows) {
+          createAssociation({
+            sourceType: entityType,
+            sourceId: entityId,
+            targetType: "error",
+            targetId: row.id,
+            relation: "same-file",
+            strength: 0.7
+          });
+          created++;
+        }
+      } catch {
+      }
+      try {
+        const rows = db2.prepare(`
+          SELECT id FROM decisions
+          WHERE files_affected LIKE ? AND archived_at IS NULL AND id != ?
+          ORDER BY created_at DESC LIMIT 3
+        `).all(`%${file2}%`, entityType === "decision" ? entityId : -1);
+        for (const row of rows) {
+          createAssociation({
+            sourceType: entityType,
+            sourceId: entityId,
+            targetType: "decision",
+            targetId: row.id,
+            relation: "same-file",
+            strength: 0.7
+          });
+          created++;
+        }
+      } catch {
+      }
+    }
+  }
+  return created;
+}
+async function autoCreateSemanticAssociations(params) {
+  const { entityType, entityId, embeddingText } = params;
+  if (!embeddingText || embeddingText.length < 10)
+    return 0;
+  let created = 0;
+  try {
+    const similar = await findSimilar2(embeddingText, 10);
+    for (const match of similar) {
+      if (match.score < 0.8)
+        continue;
+      if (match.entity_type === entityType && String(match.entity_id) === String(entityId))
+        continue;
+      createAssociation({
+        sourceType: entityType,
+        sourceId: entityId,
+        targetType: match.entity_type,
+        targetId: Number(match.entity_id),
+        relation: "semantic",
+        strength: match.score
+      });
+      created++;
+    }
+  } catch {
+  }
+  return created;
+}
+
+// dist/modules/activation.js
+init_db();
+var DECAY_FACTOR = 0.5;
+var MAX_HOPS = 3;
+var ACTIVATION_THRESHOLD = 0.1;
+function spreadingActivation(seeds) {
+  const activations = /* @__PURE__ */ new Map();
+  const visited = /* @__PURE__ */ new Set();
+  const queue = [];
+  for (const seed of seeds) {
+    const key = `${seed.type}:${seed.id}`;
+    activations.set(key, 1);
+    visited.add(key);
+    queue.push({ ...seed, activation: 1, hop: 0 });
+  }
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current.hop >= MAX_HOPS)
+      continue;
+    const neighbors = getNeighbors(current.type, current.id);
+    for (const neighbor of neighbors) {
+      const key = `${neighbor.type}:${neighbor.id}`;
+      if (visited.has(key))
+        continue;
+      const propagatedActivation = current.activation * neighbor.strength * DECAY_FACTOR;
+      if (propagatedActivation < ACTIVATION_THRESHOLD)
+        continue;
+      visited.add(key);
+      const existingActivation = activations.get(key) ?? 0;
+      const newActivation = existingActivation + propagatedActivation;
+      activations.set(key, newActivation);
+      queue.push({
+        type: neighbor.type,
+        id: neighbor.id,
+        activation: newActivation,
+        hop: current.hop + 1
+      });
+    }
+  }
+  const seedKeys = new Set(seeds.map((s) => `${s.type}:${s.id}`));
+  const result = [];
+  for (const [key, activation] of activations) {
+    if (seedKeys.has(key))
+      continue;
+    if (activation < ACTIVATION_THRESHOLD)
+      continue;
+    const [type, idStr] = key.split(":");
+    result.push({ type, id: Number(idStr), activation });
+  }
+  result.sort((a, b) => b.activation - a.activation);
+  return result;
+}
+function activateForFiles(files) {
+  if (!files || files.length === 0)
+    return [];
+  const db2 = getDb();
+  const seeds = [];
+  for (const file2 of files.slice(0, 5)) {
+    try {
+      const rows = db2.prepare(`
+        SELECT id FROM errors
+        WHERE files_involved LIKE ? AND archived_at IS NULL
+        ORDER BY last_seen DESC LIMIT 3
+      `).all(`%${file2}%`);
+      for (const row of rows)
+        seeds.push({ type: "error", id: row.id });
+    } catch {
+    }
+    try {
+      const rows = db2.prepare(`
+        SELECT id FROM decisions
+        WHERE files_affected LIKE ? AND archived_at IS NULL
+        ORDER BY created_at DESC LIMIT 3
+      `).all(`%${file2}%`);
+      for (const row of rows)
+        seeds.push({ type: "decision", id: row.id });
+    } catch {
+    }
+  }
+  if (seeds.length === 0)
+    return [];
+  return spreadingActivation(seeds);
+}
+
+// dist/tools/core.js
+function registerCoreTools(server2) {
+  server2.tool("cortex_store", "Store memory: decisions, errors, learnings (anti-patterns), todos, intents, notes", {
+    type: external_exports3.enum(["decision", "error", "learning", "todo", "intent", "note"]).describe("What to store"),
+    // decision
+    title: external_exports3.string().optional().describe("decision: short title"),
+    reasoning: external_exports3.string().optional().describe("decision: why this was chosen"),
+    category: external_exports3.enum(["architecture", "convention", "bugfix", "feature", "config", "security"]).optional(),
+    files_affected: external_exports3.array(external_exports3.string()).optional(),
+    confidence: external_exports3.enum(["high", "medium", "low"]).optional(),
+    alternatives: external_exports3.array(external_exports3.object({
+      option: external_exports3.string(),
+      reason_rejected: external_exports3.string()
+    })).optional(),
+    // error
+    error_message: external_exports3.string().optional().describe("error: what went wrong"),
+    root_cause: external_exports3.string().optional(),
+    fix_description: external_exports3.string().optional(),
+    prevention_rule: external_exports3.string().optional().describe("error: regex to detect this in future"),
+    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional(),
+    files_involved: external_exports3.array(external_exports3.string()).optional(),
+    // learning
+    anti_pattern: external_exports3.string().optional().describe("learning: bad pattern to avoid"),
+    correct_pattern: external_exports3.string().optional().describe("learning: what to do instead"),
+    context: external_exports3.string().optional().describe("learning/todo: when/where this applies"),
+    detection_regex: external_exports3.string().optional(),
+    auto_block: external_exports3.boolean().optional().describe("learning: block on PreToolUse"),
+    // todo / intent / note
+    description: external_exports3.string().optional().describe("todo: what needs to be done"),
+    priority: external_exports3.enum(["low", "medium", "high"]).optional(),
+    blocked_by: external_exports3.array(external_exports3.number().int().positive()).optional().describe("todo: IDs of unresolved todos that must be completed first"),
+    intent: external_exports3.string().optional().describe("intent: what you plan to do next session"),
+    // note
+    text: external_exports3.string().optional().describe("note: content"),
+    tags: external_exports3.array(external_exports3.string()).optional(),
+    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional(),
+    entity_id: external_exports3.number().optional(),
+    // shared
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    const { type } = input;
+    if (type === "decision") {
+      if (!input.title || !input.reasoning || !input.category) {
+        return { content: [{ type: "text", text: "Error: decision requires title, reasoning, category" }] };
+      }
+      const { decision, duplicate } = addDecision({
+        title: input.title,
+        reasoning: input.reasoning,
+        category: input.category,
+        files_affected: input.files_affected,
+        alternatives: input.alternatives,
+        confidence: input.confidence,
+        session_id: input.session_id
+      });
+      try {
+        const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), priority: input.confidence, entityType: "decision", sessionId: input.session_id });
+        getDb().prepare("UPDATE decisions SET importance_score = ? WHERE id = ?").run(score, decision.id);
+      } catch {
+      }
+      try {
+        autoCreateAssociations({ entityType: "decision", entityId: decision.id, sessionId: input.session_id, files: input.files_affected });
+      } catch {
+      }
+      autoCreateSemanticAssociations({ entityType: "decision", entityId: decision.id, embeddingText: `${input.title} ${input.reasoning}`.slice(0, 512) }).catch(() => {
+      });
+      let text = `Decision saved (id: ${decision.id})`;
+      if (duplicate)
+        text += `
+Possible duplicate of #${duplicate.id} (${duplicate.score}% similar): "${duplicate.title}"`;
+      return { content: [{ type: "text", text }] };
+    }
+    if (type === "error") {
+      if (!input.error_message) {
+        return { content: [{ type: "text", text: "Error: error requires error_message" }] };
+      }
+      const err = addError({
+        error_message: input.error_message,
+        root_cause: input.root_cause,
+        fix_description: input.fix_description,
+        prevention_rule: input.prevention_rule,
+        severity: input.severity,
+        files_involved: input.files_involved,
+        session_id: input.session_id
+      });
+      try {
+        const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), severity: input.severity, entityType: "error", sessionId: input.session_id });
+        getDb().prepare("UPDATE errors SET importance_score = ? WHERE id = ?").run(score, err.id);
+      } catch {
+      }
+      try {
+        autoCreateAssociations({ entityType: "error", entityId: err.id, sessionId: input.session_id, files: input.files_involved });
+      } catch {
+      }
+      autoCreateSemanticAssociations({ entityType: "error", entityId: err.id, embeddingText: `${input.error_message} ${input.root_cause ?? ""} ${input.fix_description ?? ""}`.slice(0, 512) }).catch(() => {
+      });
+      return { content: [{ type: "text", text: JSON.stringify(err, null, 2) }] };
+    }
+    if (type === "learning") {
+      if (!input.anti_pattern || !input.correct_pattern || !input.context) {
+        return { content: [{ type: "text", text: "Error: learning requires anti_pattern, correct_pattern, context" }] };
+      }
+      const { learning, duplicate } = addLearning({
+        anti_pattern: input.anti_pattern,
+        correct_pattern: input.correct_pattern,
+        context: input.context,
+        detection_regex: input.detection_regex,
+        severity: input.severity,
+        auto_block: input.auto_block,
+        session_id: input.session_id
+      });
+      try {
+        const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), severity: input.severity, entityType: "learning", sessionId: input.session_id });
+        getDb().prepare("UPDATE learnings SET importance_score = ? WHERE id = ?").run(score, learning.id);
+      } catch {
+      }
+      try {
+        autoCreateAssociations({ entityType: "learning", entityId: learning.id, sessionId: input.session_id });
+      } catch {
+      }
+      autoCreateSemanticAssociations({ entityType: "learning", entityId: learning.id, embeddingText: `${input.anti_pattern} ${input.correct_pattern} ${input.context}`.slice(0, 512) }).catch(() => {
+      });
+      let text = `Learning saved (id: ${learning.id})`;
+      if (duplicate)
+        text += `
+Possible duplicate of #${duplicate.id}: "${duplicate.anti_pattern}"`;
+      return { content: [{ type: "text", text }] };
+    }
+    if (type === "todo") {
+      if (!input.description) {
+        return { content: [{ type: "text", text: "Error: todo requires description" }] };
+      }
+      try {
+        const result = addUnfinished({
+          description: input.description,
+          context: input.context,
+          priority: input.priority,
+          session_id: input.session_id,
+          blocked_by: input.blocked_by
+        });
+        try {
+          const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), priority: input.priority, entityType: "unfinished", sessionId: input.session_id });
+          getDb().prepare("UPDATE unfinished SET importance_score = ? WHERE id = ?").run(score, result.item.id);
+        } catch {
+        }
+        try {
+          autoCreateAssociations({ entityType: "unfinished", entityId: result.item.id, sessionId: input.session_id });
+        } catch {
+        }
+        autoCreateSemanticAssociations({ entityType: "unfinished", entityId: result.item.id, embeddingText: `${input.description} ${input.context ?? ""}`.slice(0, 512) }).catch(() => {
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (error48) {
+        const message = error48 instanceof Error ? error48.message : String(error48);
+        return { content: [{ type: "text", text: `Error: ${message}` }] };
+      }
+    }
+    if (type === "intent") {
+      if (!input.intent) {
+        return { content: [{ type: "text", text: "Error: intent requires intent field" }] };
+      }
+      const db2 = getDb();
+      const ts = (/* @__PURE__ */ new Date()).toISOString();
+      db2.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(input.session_id ?? `intent-${ts}`, ts);
+      db2.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(input.session_id ?? null, ts, `[INTENT] ${input.intent}`);
+      return { content: [{ type: "text", text: `Intent stored: "${input.intent}"` }] };
+    }
+    if (type === "note") {
+      if (!input.text) {
+        return { content: [{ type: "text", text: "Error: note requires text" }] };
+      }
+      const db2 = getDb();
+      const ts = (/* @__PURE__ */ new Date()).toISOString();
+      const result = db2.prepare(`INSERT INTO notes (text, tags, entity_type, entity_id, session_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(input.text, input.tags ? JSON.stringify(input.tags) : null, input.entity_type ?? null, input.entity_id ?? null, input.session_id ?? null, ts);
+      const insertedId = Number(result.lastInsertRowid);
+      try {
+        const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: ts, entityType: "note", sessionId: input.session_id });
+        db2.prepare("UPDATE notes SET importance_score = ? WHERE id = ?").run(score, insertedId);
+      } catch {
+      }
+      try {
+        autoCreateAssociations({ entityType: "note", entityId: insertedId, sessionId: input.session_id });
+      } catch {
+      }
+      autoCreateSemanticAssociations({ entityType: "note", entityId: insertedId, embeddingText: `${input.text} ${(input.tags ?? []).join(" ")}`.slice(0, 512) }).catch(() => {
+      });
+      embedAsync("note", insertedId, { text: input.text, tags: (input.tags ?? []).join(" ") });
+      return { content: [{ type: "text", text: `Note saved (id: ${insertedId})` }] };
+    }
+    return { content: [{ type: "text", text: `Unknown type: ${type}` }] };
+  });
+  server2.tool("cortex_search", "Search all Cortex memory: decisions, errors, learnings, todos, notes, sessions", {
+    query: external_exports3.string().describe('Search query (FTS5: AND, OR, NOT, "phrase")'),
+    limit: external_exports3.number().optional().describe("Max results (default: 15)"),
+    summarize: external_exports3.boolean().optional().describe("Optional AI summary (requires GEMINI_API_KEY)")
+  }, async ({ query, limit, summarize }) => {
+    getDb();
+    const results = await searchAll(query, limit ?? 15);
+    const formatted = formatResults(results);
+    if (!summarize) {
+      return { content: [{ type: "text", text: formatted }] };
+    }
+    if (!isGeminiAvailable()) {
+      return {
+        content: [{
+          type: "text",
+          text: `Gemini summary unavailable: set GEMINI_API_KEY (or GOOGLE_API_KEY).
+
+${formatted}`
+        }]
+      };
+    }
+    const summary = await summarizeWithGemini({
+      title: `Summarize Cortex search for query: ${query}`,
+      text: formatted,
+      maxOutputTokens: 500
+    });
+    const combined = summary ? `AI SUMMARY
+${summary}
+
+RAW RESULTS
+${formatted}` : formatted;
+    return { content: [{ type: "text", text: combined }] };
+  });
+  server2.tool("cortex_context", "Get session context: recent sessions, todos, learnings, health. Pass files for file-specific context.", {
+    files: external_exports3.array(external_exports3.string()).optional().describe("File paths for targeted context"),
+    summarize: external_exports3.boolean().optional().describe("Optional AI summary (requires GEMINI_API_KEY)"),
+    summary_only: external_exports3.boolean().optional().describe("Return only summary text")
+  }, async ({ files, summarize, summary_only }) => {
+    getDb();
+    const ctx = {};
+    ctx.recentSessions = getRecentSummaries(3);
+    ctx.unfinished = listUnfinished({ limit: 10 });
+    if (files && files.length > 0) {
+      ctx.fileErrors = getErrorsForFiles(files);
+      try {
+        const activated = activateForFiles(files);
+        if (activated.length > 0) {
+          ctx.activatedMemories = activated.slice(0, 10);
+        }
+      } catch {
+      }
+    }
+    ctx.activeLearnings = listLearnings({ autoBlockOnly: true });
+    ctx.health = getLatestSnapshot();
+    ctx.projectMap = getModuleSummary();
+    const raw = JSON.stringify(ctx, null, 2);
+    if (!summarize) {
+      return { content: [{ type: "text", text: raw }] };
+    }
+    if (!isGeminiAvailable()) {
+      return {
+        content: [{
+          type: "text",
+          text: `Gemini summary unavailable: set GEMINI_API_KEY (or GOOGLE_API_KEY).
+
+${raw}`
+        }]
+      };
+    }
+    const summary = await summarizeWithGemini({
+      title: "Summarize Cortex context block",
+      text: raw,
+      maxOutputTokens: 700
+    });
+    if (!summary) {
+      return { content: [{ type: "text", text: raw }] };
+    }
+    const out = summary_only ? summary : `AI SUMMARY
+${summary}
+
+RAW CONTEXT
+${raw}`;
+    return { content: [{ type: "text", text: out }] };
+  });
+  server2.tool("cortex_list", "List stored items by type", {
+    type: external_exports3.enum(["decisions", "errors", "learnings", "todos", "notes", "extractions"]).describe("What to list"),
+    category: external_exports3.string().optional().describe("decisions: filter by category"),
+    severity: external_exports3.string().optional().describe("errors/learnings: filter by severity"),
+    auto_block_only: external_exports3.boolean().optional().describe("learnings: only auto-blocking rules"),
+    filter: external_exports3.enum(["all", "actionable"]).optional().describe('todos: "actionable" shows only unblocked unresolved items'),
+    limit: external_exports3.number().optional()
+  }, async (input) => {
+    const db2 = getDb();
+    let result;
+    if (input.type === "decisions") {
+      result = listDecisions({ category: input.category, limit: input.limit });
+    } else if (input.type === "errors") {
+      result = listErrors({ severity: input.severity, limit: input.limit });
+    } else if (input.type === "learnings") {
+      result = listLearnings({ autoBlockOnly: input.auto_block_only, limit: input.limit ?? 50 });
+    } else if (input.type === "todos") {
+      result = listUnfinished({ limit: input.limit, filter: input.filter });
+    } else if (input.type === "notes") {
+      result = db2.prepare(`SELECT * FROM notes WHERE 1=1 ORDER BY created_at DESC LIMIT ?`).all(input.limit ?? 50);
+    } else if (input.type === "extractions") {
+      result = listExtractions({ status: input.filter ?? "pending", limit: input.limit });
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  });
+  server2.tool("cortex_resolve", "Close/update an item: mark todo resolved, decision reviewed, or update an error", {
+    type: external_exports3.enum(["todo", "decision", "error", "extraction"]),
+    id: external_exports3.number(),
+    fix_description: external_exports3.string().optional(),
+    prevention_rule: external_exports3.string().optional(),
+    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional(),
+    action: external_exports3.enum(["promote", "reject"]).optional().describe("extraction: promote to real entry or reject"),
+    session_id: external_exports3.string().optional()
+  }, async (input) => {
+    getDb();
+    if (input.type === "todo") {
+      touchMemory("unfinished", input.id);
+      const result = resolveUnfinished(input.id, input.session_id);
+      const unblocked = result.newly_unblocked;
+      const note = unblocked.length > 0 ? `
+${unblocked.length} dependent todo(s) may now be actionable: ${unblocked.map((u) => `#${u.id}`).join(", ")}` : "";
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            resolved: true,
+            item: result.item,
+            newly_unblocked: unblocked,
+            message: `Todo #${input.id} resolved.${note}`
+          }, null, 2)
+        }]
+      };
+    }
+    if (input.type === "decision") {
+      touchMemory("decisions", input.id);
+      getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(input.id);
+      return { content: [{ type: "text", text: `Decision ${input.id} marked as reviewed.` }] };
+    }
+    if (input.type === "error") {
+      touchMemory("errors", input.id);
+      const err = updateError({
+        id: input.id,
+        fix_description: input.fix_description,
+        prevention_rule: input.prevention_rule,
+        severity: input.severity
+      });
+      return { content: [{ type: "text", text: JSON.stringify(err, null, 2) }] };
+    }
+    if (input.type === "extraction") {
+      try {
+        const action = input.action ?? "promote";
+        if (action === "reject") {
+          rejectExtraction(input.id);
+          return { content: [{ type: "text", text: `Extraction #${input.id} rejected.` }] };
+        }
+        const result = promoteExtraction(input.id);
+        return {
+          content: [{
+            type: "text",
+            text: `Extraction #${input.id} promoted to ${result.type} #${result.targetId}.`
+          }]
+        };
+      } catch (error48) {
+        const message = error48 instanceof Error ? error48.message : String(error48);
+        return { content: [{ type: "text", text: `Error: ${message}` }] };
+      }
+    }
+    return { content: [{ type: "text", text: `Unknown type: ${input.type}` }] };
+  });
+  server2.tool("cortex_snooze", "Set a reminder for a future session", {
+    description: external_exports3.string(),
+    until: external_exports3.string().describe("Relative: 3d / 1w  or  ISO date: 2026-03-01"),
+    session_id: external_exports3.string().optional()
+  }, async ({ description, until, session_id }) => {
+    let d = /* @__PURE__ */ new Date();
+    if (/^\d+d$/i.test(until))
+      d.setDate(d.getDate() + parseInt(until));
+    else if (/^\d+w$/i.test(until))
+      d.setDate(d.getDate() + parseInt(until) * 7);
+    else
+      d = new Date(until);
+    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until,created_at) VALUES (?,?,?,?,?,datetime('now'))`).run(description, "snoozed", "medium", session_id ?? null, d.toISOString());
+    return { content: [{ type: "text", text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
+  });
+  server2.tool("cortex_reindex_embeddings", "Build or refresh vector embeddings for semantic search over existing memory.", {
+    limit_per_type: external_exports3.number().optional().describe("Max items per entity type (default: 300)"),
+    force: external_exports3.boolean().optional().describe("Re-embed even if embedding already exists"),
+    include_resolved_todos: external_exports3.boolean().optional().describe("Include resolved unfinished items")
+  }, async ({ limit_per_type, force, include_resolved_todos }) => {
+    getDb();
+    const before = getEmbeddingCount();
+    const result = await backfillEmbeddings({
+      limitPerType: limit_per_type ?? 300,
+      force: force ?? false,
+      includeResolvedTodos: include_resolved_todos ?? false
+    });
+    const after = getEmbeddingCount();
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          success: true,
+          before_count: before,
+          after_count: after,
+          ...result,
+          hint: "Use cortex_search for semantic context queries."
+        }, null, 2)
+      }]
+    };
+  });
+  server2.tool("cortex_save_session", "Save or update a session (used by hooks)", {
     session_id: external_exports3.string(),
     summary: external_exports3.string().optional(),
     key_changes: external_exports3.array(external_exports3.object({
@@ -31530,329 +33045,6 @@ function registerSessionTools(server2) {
       ended_at: status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : void 0
     });
     return { content: [{ type: "text", text: JSON.stringify(session, null, 2) }] };
-  });
-  server2.tool("cortex_list_sessions", "List recent sessions with summaries", {
-    limit: external_exports3.number().optional(),
-    chain_id: external_exports3.string().optional(),
-    tag: external_exports3.string().optional()
-  }, async ({ limit, chain_id, tag }) => {
-    getDb();
-    let result = listSessions(limit ?? 20, chain_id);
-    if (tag) {
-      result = result.filter((s) => s.tags?.includes(tag));
-    }
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  });
-  server2.tool("cortex_search", "Semantic search across all Cortex data: sessions, decisions, errors, learnings, notes, unfinished. Uses BM25 + embedding similarity with RRF-Fusion for best results.", {
-    query: external_exports3.string().describe('Search query \u2014 supports FTS5 syntax (AND, OR, NOT, "phrase")'),
-    limit: external_exports3.number().optional().describe("Max results to return (default: 15)")
-  }, async ({ query, limit }) => {
-    getDb();
-    const results = await searchAll(query, limit ?? 15);
-    const formatted = formatResults(results);
-    return { content: [{ type: "text", text: formatted }] };
-  });
-  server2.tool("cortex_get_context", "Get relevant context for specific files or the current work", {
-    files: external_exports3.array(external_exports3.string()).optional()
-  }, async ({ files }) => {
-    getDb();
-    const context = {};
-    context.recentSessions = getRecentSummaries(3);
-    context.unfinished = listUnfinished({ limit: 10 });
-    if (files && files.length > 0) {
-      context.fileErrors = getErrorsForFiles(files);
-    }
-    context.activeLearnings = listLearnings({ autoBlockOnly: true });
-    context.health = getLatestSnapshot();
-    context.projectMap = getModuleSummary();
-    return { content: [{ type: "text", text: JSON.stringify(context, null, 2) }] };
-  });
-}
-
-// dist/tools/decisions.js
-init_db();
-function registerDecisionTools(server2) {
-  server2.tool("cortex_add_decision", "Log an architectural or design decision with reasoning", {
-    title: external_exports3.string().describe('Short title of the decision. Example: "Use SQLite for local persistence" or "Adopt BM25/FTS5 for full-text search"'),
-    reasoning: external_exports3.string().describe('WHY this decision was made. Include trade-offs and context. Example: "SQLite is embedded, zero-config, and sufficient for single-user local tool. Postgres would add deployment complexity."'),
-    category: external_exports3.enum(["architecture", "convention", "bugfix", "feature", "config", "security"]).describe("Category: architecture=structural choices, convention=code style, bugfix=fix rationale, feature=new functionality, config=settings/env, security=security choices"),
-    files_affected: external_exports3.array(external_exports3.string()).optional().describe('File paths affected by this decision. Example: ["server/src/db.ts", "scripts/ensure-db.js"]'),
-    alternatives: external_exports3.array(external_exports3.object({
-      option: external_exports3.string().describe('Alternative that was considered. Example: "Use PostgreSQL"'),
-      reason_rejected: external_exports3.string().describe('Why this alternative was rejected. Example: "Too heavy for local single-user tool"')
-    })).optional(),
-    session_id: external_exports3.string().optional(),
-    confidence: external_exports3.enum(["high", "medium", "low"]).optional().describe("Confidence level: high=certain, medium=likely good, low=experimental/uncertain")
-  }, async (input) => {
-    getDb();
-    const { decision, duplicate } = addDecision(input);
-    let text = "Decision saved (id: " + decision.id + ")";
-    if (duplicate) {
-      text += "\nWarning: Possible duplicate of Decision #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.title + '"';
-    }
-    return { content: [{ type: "text", text }] };
-  });
-  server2.tool("cortex_list_decisions", "List architectural decisions, optionally filtered by category", {
-    category: external_exports3.string().optional(),
-    limit: external_exports3.number().optional(),
-    include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each decision")
-  }, async (input) => {
-    const db2 = getDb();
-    const result = listDecisions({ category: input.category, limit: input.limit });
-    if (input.include_notes) {
-      for (const d of result) {
-        d.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='decision' AND entity_id=? ORDER BY created_at DESC`).all(d.id);
-      }
-    }
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  });
-  server2.tool("cortex_mark_decision_reviewed", "Mark a decision as reviewed / still current (resets stale flag)", { id: external_exports3.number() }, async ({ id }) => {
-    getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(id);
-    return { content: [{ type: "text", text: `Decision ${id} marked as reviewed.` }] };
-  });
-}
-
-// dist/tools/errors.js
-init_db();
-function registerErrorTools(server2) {
-  server2.tool("cortex_add_error", "Record an error with optional root cause, fix, and prevention rule", {
-    error_message: external_exports3.string().describe(`The error that occurred. Example: "TypeError: Cannot read property 'id' of undefined in sessions.updateSession" or "FTS5 table not found: learnings_fts"`),
-    root_cause: external_exports3.string().optional().describe('WHY it happened. Example: "Session was not created before updateSession was called" or "ensure-db.js ran before FTS5 virtual tables were defined"'),
-    fix_description: external_exports3.string().optional().describe('How it was fixed. Example: "Added createSession() call before updateSession() in cortex_save_session handler"'),
-    fix_diff: external_exports3.string().optional().describe("The actual code diff that fixed it (optional, for future reference)"),
-    files_involved: external_exports3.array(external_exports3.string()).optional().describe('Files where the error occurred. Example: ["server/src/index.ts", "server/src/modules/sessions.ts"]'),
-    prevention_rule: external_exports3.string().optional().describe('Regex or keyword to detect this pattern in future. Example: "updateSession(" or "FTS5"'),
-    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional().describe("Impact: low=cosmetic, medium=functional issue, high=data loss risk, critical=system down"),
-    session_id: external_exports3.string().optional(),
-    batch: external_exports3.array(external_exports3.object({
-      error_message: external_exports3.string(),
-      root_cause: external_exports3.string().optional(),
-      fix_description: external_exports3.string().optional(),
-      fix_diff: external_exports3.string().optional(),
-      files_involved: external_exports3.array(external_exports3.string()).optional(),
-      prevention_rule: external_exports3.string().optional(),
-      severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional(),
-      session_id: external_exports3.string().optional()
-    })).optional().describe("Add multiple errors at once")
-  }, async (input) => {
-    if (input.batch && input.batch.length > 0) {
-      const results = input.batch.map((item) => addError(item));
-      return { content: [{ type: "text", text: JSON.stringify({ added: results.length, ids: results.map((r) => r.id) }, null, 2) }] };
-    }
-    getDb();
-    const error48 = addError(input);
-    return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
-  });
-  server2.tool("cortex_list_errors", "List known errors, optionally filtered by severity or file", {
-    severity: external_exports3.string().optional(),
-    file: external_exports3.string().optional(),
-    limit: external_exports3.number().optional(),
-    include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each error")
-  }, async (input) => {
-    const db2 = getDb();
-    const result = listErrors(input);
-    if (input.include_notes) {
-      for (const e of result) {
-        e.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='error' AND entity_id=? ORDER BY created_at DESC`).all(e.id);
-      }
-    }
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  });
-  server2.tool("cortex_update_error", "Update an existing error record \u2014 add fix description, prevention rule, or change severity", {
-    id: external_exports3.number(),
-    fix_description: external_exports3.string().optional(),
-    root_cause: external_exports3.string().optional(),
-    fix_diff: external_exports3.string().optional(),
-    prevention_rule: external_exports3.string().optional(),
-    severity: external_exports3.enum(["low", "medium", "high", "critical"]).optional()
-  }, async (input) => {
-    getDb();
-    const error48 = updateError(input);
-    return { content: [{ type: "text", text: JSON.stringify(error48, null, 2) }] };
-  });
-}
-
-// dist/tools/learnings.js
-init_db();
-
-// dist/modules/conventions.js
-init_db();
-function addConvention(input) {
-  const db2 = getDb();
-  db2.prepare(`
-    INSERT INTO conventions (name, description, detection_pattern, violation_pattern, examples_good, examples_bad, scope, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET
-      description = excluded.description,
-      detection_pattern = COALESCE(excluded.detection_pattern, conventions.detection_pattern),
-      violation_pattern = COALESCE(excluded.violation_pattern, conventions.violation_pattern),
-      examples_good = COALESCE(excluded.examples_good, conventions.examples_good),
-      examples_bad = COALESCE(excluded.examples_bad, conventions.examples_bad),
-      scope = COALESCE(excluded.scope, conventions.scope),
-      source = COALESCE(excluded.source, conventions.source)
-  `).run(input.name, input.description, input.detection_pattern ?? null, input.violation_pattern ?? null, input.examples_good ? JSON.stringify(input.examples_good) : null, input.examples_bad ? JSON.stringify(input.examples_bad) : null, input.scope ?? null, input.source ?? null);
-  return getConventionByName(input.name);
-}
-function getConventionByName(name) {
-  const db2 = getDb();
-  const row = db2.prepare("SELECT * FROM conventions WHERE name = ?").get(name);
-  if (!row)
-    return null;
-  return parseConventionRow(row);
-}
-function listConventions(scope) {
-  const db2 = getDb();
-  let sql = "SELECT * FROM conventions";
-  const params = [];
-  if (scope) {
-    sql += " WHERE scope = ?";
-    params.push(scope);
-  }
-  sql += " ORDER BY violation_count DESC, name";
-  const rows = db2.prepare(sql).all(...params);
-  return rows.map(parseConventionRow);
-}
-function recordViolation(conventionId) {
-  const db2 = getDb();
-  db2.prepare("UPDATE conventions SET violation_count = violation_count + 1, last_violated = ? WHERE id = ?").run(now(), conventionId);
-}
-function checkContentAgainstConventions(content) {
-  const conventions = listConventions();
-  const results = [];
-  for (const conv of conventions) {
-    if (!conv.violation_pattern)
-      continue;
-    try {
-      const regex = new RegExp(conv.violation_pattern, "gm");
-      if (regex.test(content)) {
-        results.push({ convention: conv, match: conv.violation_pattern, type: "violation" });
-        recordViolation(conv.id);
-      }
-    } catch {
-    }
-  }
-  return results;
-}
-function parseConventionRow(row) {
-  return {
-    ...row,
-    examples_good: row.examples_good ? JSON.parse(row.examples_good) : null,
-    examples_bad: row.examples_bad ? JSON.parse(row.examples_bad) : null
-  };
-}
-
-// dist/tools/learnings.js
-function registerLearningTools(server2) {
-  server2.tool("cortex_add_learning", "Record an anti-pattern and its correct alternative, optionally with auto-blocking regex", {
-    anti_pattern: external_exports3.string().describe('The bad pattern to avoid. Example: "Using db.prepare() inside a loop" or "Calling getDb() without checking if DB is initialized"'),
-    correct_pattern: external_exports3.string().describe('The correct alternative to use instead. Example: "Prepare statements once outside the loop and reuse" or "Always call ensureDb() before getDb()"'),
-    context: external_exports3.string().describe('When/where this applies. Example: "SQLite better-sqlite3 usage" or "Cortex server startup sequence"'),
-    detection_regex: external_exports3.string().optional().describe('Regex to auto-detect this pattern in code. Example: "db.prepare(.*).*.run(" or "for.*getDb()"'),
-    severity: external_exports3.enum(["low", "medium", "high"]).optional().describe("Impact: low=minor quality issue, medium=likely bug, high=will cause failures"),
-    auto_block: external_exports3.boolean().optional().describe("If true, cortex_check_regression will flag this pattern before every file edit"),
-    session_id: external_exports3.string().optional(),
-    batch: external_exports3.array(external_exports3.object({
-      anti_pattern: external_exports3.string(),
-      correct_pattern: external_exports3.string(),
-      context: external_exports3.string(),
-      detection_regex: external_exports3.string().optional(),
-      severity: external_exports3.enum(["low", "medium", "high"]).optional(),
-      auto_block: external_exports3.boolean().optional(),
-      session_id: external_exports3.string().optional()
-    })).optional().describe('Add multiple learnings at once. Example: [{anti_pattern: "foo", correct_pattern: "bar", context: "baz"}]')
-  }, async (input) => {
-    if (input.batch && input.batch.length > 0) {
-      getDb();
-      const results = input.batch.map((item) => addLearning(item));
-      return { content: [{ type: "text", text: JSON.stringify({ added: results.length, results: results.map((r) => ({ id: r.learning.id, duplicate: !!r.duplicate })) }, null, 2) }] };
-    }
-    getDb();
-    const { learning, duplicate } = addLearning(input);
-    let text = "Learning saved (id: " + learning.id + ")";
-    if (duplicate) {
-      text += "\nWarning: Possible duplicate of Learning #" + duplicate.id + " (" + duplicate.score + '% similar): "' + duplicate.anti_pattern + '"';
-    }
-    return { content: [{ type: "text", text }] };
-  });
-  server2.tool("cortex_update_learning", "Update an existing learning/anti-pattern entry (e.g. add detection_regex, change severity, toggle auto_block)", {
-    id: external_exports3.number(),
-    anti_pattern: external_exports3.string().optional(),
-    correct_pattern: external_exports3.string().optional(),
-    detection_regex: external_exports3.string().nullable().optional(),
-    context: external_exports3.string().optional(),
-    severity: external_exports3.enum(["low", "medium", "high"]).optional(),
-    auto_block: external_exports3.boolean().optional(),
-    confidence: external_exports3.number().min(0.3).max(0.9).optional().describe("Confidence score (0.3-0.9). Higher = more trusted.")
-  }, async (input) => {
-    getDb();
-    const learning = updateLearning(input);
-    return { content: [{ type: "text", text: JSON.stringify(learning, null, 2) }] };
-  });
-  server2.tool("cortex_delete_learning", "Delete a learning/anti-pattern entry by ID", { id: external_exports3.number() }, async ({ id }) => {
-    getDb();
-    const success2 = deleteLearning(id);
-    return { content: [{ type: "text", text: JSON.stringify({ success: success2, deleted_id: id }, null, 2) }] };
-  });
-  server2.tool("cortex_list_learnings", "List recorded anti-patterns and learnings", { auto_block_only: external_exports3.boolean().optional(), limit: external_exports3.number().optional(), include_notes: external_exports3.boolean().optional().describe("If true, include linked notes for each learning") }, async ({ auto_block_only, limit, include_notes }) => {
-    const db2 = getDb();
-    const result = listLearnings({ autoBlockOnly: auto_block_only, limit: limit ?? 50 });
-    if (include_notes) {
-      for (const l of result) {
-        l.notes = db2.prepare(`SELECT id, text, created_at FROM notes WHERE entity_type='learning' AND entity_id=? ORDER BY created_at DESC`).all(l.id);
-      }
-    }
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  });
-  server2.tool("cortex_share_learning", "Mark a learning as shared across projects", {
-    id: external_exports3.number().describe("Learning ID to share"),
-    shared: external_exports3.boolean().optional().default(true).describe("Set to false to unshare")
-  }, async ({ id, shared }) => {
-    const db2 = getDb();
-    const val = shared ? 1 : 0;
-    db2.prepare("UPDATE learnings SET shared = ? WHERE id = ?").run(val, id);
-    return { content: [{ type: "text", text: `Learning #${id} ${shared ? "shared" : "unshared"}` }] };
-  });
-  server2.tool("cortex_check_regression", "Check if content would introduce a known regression or anti-pattern", {
-    file_path: external_exports3.string(),
-    content: external_exports3.string()
-  }, async ({ file_path, content }) => {
-    getDb();
-    const warnings = [];
-    const learningMatches = checkContentAgainstLearnings(content);
-    for (const m of learningMatches) {
-      warnings.push({
-        type: "anti-pattern",
-        message: `Anti-pattern: "${m.learning.anti_pattern}" \u2192 Use: "${m.learning.correct_pattern}"`,
-        severity: m.learning.severity
-      });
-    }
-    const conventionMatches = checkContentAgainstConventions(content);
-    for (const m of conventionMatches) {
-      warnings.push({
-        type: "convention-violation",
-        message: `Convention "${m.convention.name}": ${m.convention.description}`,
-        severity: "warning"
-      });
-    }
-    const preventionRules = getPreventionRules();
-    for (const rule of preventionRules) {
-      try {
-        if (new RegExp(rule.prevention_rule, "m").test(content)) {
-          warnings.push({
-            type: "regression",
-            message: `This pattern caused Error #${rule.id}: "${rule.error_message}"`,
-            severity: "error"
-          });
-        }
-      } catch {
-      }
-    }
-    return {
-      content: [{
-        type: "text",
-        text: warnings.length > 0 ? JSON.stringify({ blocked: warnings.some((w) => w.severity === "error"), warnings }, null, 2) : '{"blocked": false, "warnings": []}'
-      }]
-    };
   });
 }
 
@@ -32039,12 +33231,12 @@ function registerProjectMapTools(server2) {
     const db2 = getDb();
     const fileCounts = /* @__PURE__ */ new Map();
     for (const line of gitOutput.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed)
+      const normalized = line.trim().replace(/\\/g, "/");
+      if (!normalized)
         continue;
-      if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed))
+      if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(normalized))
         continue;
-      fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
+      fileCounts.set(normalized, (fileCounts.get(normalized) ?? 0) + 1);
     }
     const stmt = db2.prepare(`
         INSERT INTO project_files (path, change_count, last_changed)
@@ -32063,1220 +33255,28 @@ function registerProjectMapTools(server2) {
   });
 }
 
-// dist/tools/tracking.js
-init_db();
-function registerTrackingTools(server2) {
-  server2.tool("cortex_get_unfinished", "Get open/unresolved items \u2014 things that were started but not completed", {}, async () => {
-    getDb();
-    const items = listUnfinished();
-    return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] };
-  });
-  server2.tool("cortex_add_unfinished", "Track something that needs to be done later", {
-    description: external_exports3.string().describe('What needs to be done. Example: "Implement RRF fusion for cortex_search (BM25 + embeddings)" or "Add input_examples to tool definitions"'),
-    context: external_exports3.string().optional().describe('Why it matters / relevant links. Example: "See https://github.com/oraios/serena \u2014 LSP-based symbol navigation, 30+ languages"'),
-    priority: external_exports3.enum(["low", "medium", "high"]).optional().describe("Priority: low=nice-to-have, medium=should do soon, high=blocking or urgent"),
-    session_id: external_exports3.string().optional()
-  }, async (input) => {
-    getDb();
-    const item = addUnfinished(input);
-    return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }] };
-  });
-  server2.tool("cortex_resolve_unfinished", "Mark an unfinished item as resolved/done", {
-    id: external_exports3.number().optional().describe("Single item ID to resolve"),
-    ids: external_exports3.array(external_exports3.number()).optional().describe("Multiple item IDs to resolve at once. Example: [1, 2, 3]"),
-    session_id: external_exports3.string().optional()
-  }, async ({ id, ids, session_id }) => {
-    getDb();
-    const toResolve = ids ?? (id !== void 0 ? [id] : []);
-    if (toResolve.length === 0) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "provide id or ids" }) }] };
-    }
-    const results = toResolve.map((i) => ({ id: i, item: resolveUnfinished(i, session_id) }));
-    return { content: [{ type: "text", text: JSON.stringify({ resolved: results.length, results }, null, 2) }] };
-  });
-  server2.tool("cortex_add_intent", "Store a stated intention for follow-up in future sessions", {
-    intent: external_exports3.string().describe("What you plan to do next"),
-    session_id: external_exports3.string().optional()
-  }, async ({ intent, session_id }) => {
-    const db2 = getDb();
-    const ts = (/* @__PURE__ */ new Date()).toISOString();
-    db2.prepare(`INSERT OR IGNORE INTO sessions (id, started_at, status) VALUES (?, ?, 'active')`).run(session_id ?? `intent-${ts}`, ts);
-    db2.prepare(`INSERT INTO unfinished (session_id, created_at, description, context, priority) VALUES (?, ?, ?, 'intent', 'medium')`).run(session_id ?? null, ts, `[INTENT] ${intent}`);
-    return { content: [{ type: "text", text: `Intent stored: "${intent}"` }] };
-  });
-  server2.tool("cortex_snooze", "Schedule a future session reminder", {
-    description: external_exports3.string(),
-    until: external_exports3.string().describe("Relative 3d/1w or ISO date 2026-03-01"),
-    session_id: external_exports3.string().optional()
-  }, async ({ description, until, session_id }) => {
-    let d = /* @__PURE__ */ new Date();
-    if (/^\d+d$/i.test(until))
-      d.setDate(d.getDate() + parseInt(until));
-    else if (/^\d+w$/i.test(until))
-      d.setDate(d.getDate() + parseInt(until) * 7);
-    else
-      d = new Date(until);
-    getDb().prepare(`INSERT INTO unfinished (description,context,priority,session_id,snooze_until,created_at) VALUES (?,?,?,?,?,datetime('now'))`).run(description, "snoozed", "medium", session_id ?? null, d.toISOString());
-    return { content: [{ type: "text", text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
-  });
-}
-
-// dist/tools/intelligence.js
-init_db();
-
-// dist/analyzer/diff-extractor.js
-function parseDiff(diffText) {
-  const files = [];
-  const fileChunks = diffText.split(/^diff --git /m).filter(Boolean);
-  for (const chunk of fileChunks) {
-    const parsed = parseFileChunk(chunk);
-    if (parsed)
-      files.push(parsed);
-  }
-  return files;
-}
-function parseFileChunk(chunk) {
-  const lines = chunk.split("\n");
-  const headerMatch = lines[0]?.match(/a\/(.+?)\s+b\/(.+)/);
-  if (!headerMatch)
-    return null;
-  const filePath = headerMatch[2];
-  let changeType = "modified";
-  if (chunk.includes("new file mode"))
-    changeType = "added";
-  else if (chunk.includes("deleted file mode"))
-    changeType = "deleted";
-  else if (chunk.includes("rename from"))
-    changeType = "renamed";
-  const hunks = [];
-  let currentHunk = null;
-  let lineNumber = 0;
-  let linesAdded = 0;
-  let linesRemoved = 0;
-  for (const line of lines) {
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    if (hunkMatch) {
-      if (currentHunk)
-        hunks.push(currentHunk);
-      currentHunk = {
-        oldStart: parseInt(hunkMatch[1], 10),
-        oldCount: parseInt(hunkMatch[2] ?? "1", 10),
-        newStart: parseInt(hunkMatch[3], 10),
-        newCount: parseInt(hunkMatch[4] ?? "1", 10),
-        lines: []
-      };
-      lineNumber = parseInt(hunkMatch[3], 10);
-      continue;
-    }
-    if (!currentHunk)
-      continue;
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      currentHunk.lines.push({ type: "add", content: line.slice(1), lineNumber });
-      linesAdded++;
-      lineNumber++;
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      currentHunk.lines.push({ type: "remove", content: line.slice(1), lineNumber });
-      linesRemoved++;
-    } else if (line.startsWith(" ")) {
-      currentHunk.lines.push({ type: "context", content: line.slice(1), lineNumber });
-      lineNumber++;
-    }
-  }
-  if (currentHunk)
-    hunks.push(currentHunk);
-  return { filePath, changeType, hunks, linesAdded, linesRemoved };
-}
-
-// dist/analyzer/chunk-analyzer.js
-var BOUNDARY_PATTERNS = [
-  /^\s*export\s+(?:async\s+)?function\s+(\w+)/,
-  /^\s*(?:async\s+)?function\s+(\w+)/,
-  /^\s*export\s+class\s+(\w+)/,
-  /^\s*class\s+(\w+)/,
-  /^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\(/,
-  /^\s*def\s+(\w+)/,
-  // Python
-  /^\s*func\s+(\w+)/
-  // Go/Swift
-];
-var SKIP = /* @__PURE__ */ new Set(["if", "for", "while", "switch", "catch", "else", "return"]);
-function detectFunctionName(line) {
-  for (const pat of BOUNDARY_PATTERNS) {
-    const m = line.match(pat);
-    if (m?.[1] && !SKIP.has(m[1]))
-      return m[1];
-  }
-  return null;
-}
-function chunkByFunctions(diff) {
-  const chunks = /* @__PURE__ */ new Map();
-  for (const hunk of diff.hunks) {
-    let current = "module-level";
-    for (const line of hunk.lines) {
-      const det = detectFunctionName(line.content);
-      if (det)
-        current = det;
-    }
-    if (!chunks.has(current)) {
-      chunks.set(current, {
-        functionName: current,
-        startLine: hunk.newStart,
-        hunks: [],
-        linesAdded: 0,
-        linesRemoved: 0
-      });
-    }
-    const chunk = chunks.get(current);
-    chunk.hunks.push(hunk);
-    chunk.linesAdded += hunk.lines.filter((l) => l.type === "add").length;
-    chunk.linesRemoved += hunk.lines.filter((l) => l.type === "remove").length;
-  }
-  return Array.from(chunks.values());
-}
-function summarizeFunctionChanges(diff) {
-  const chunks = chunkByFunctions(diff);
-  if (chunks.length === 0)
-    return diff.filePath + ": no changes";
-  return diff.filePath + " -> " + chunks.map((c) => c.functionName + "() +" + c.linesAdded + "/-" + c.linesRemoved).join(", ");
-}
-
-// dist/tools/intelligence.js
-function registerIntelligenceTools(server2) {
-  server2.tool("cortex_blame", "Show full history for a file: diffs, errors, decisions", { file_path: external_exports3.string() }, async ({ file_path }) => {
-    const db2 = getDb();
-    const lines = [`=== History for ${file_path} ===`];
-    try {
-      const fileDiffs = db2.prepare(`SELECT d.created_at, d.change_type, s.summary FROM diffs d LEFT JOIN sessions s ON s.id=d.session_id WHERE d.file_path LIKE ? ORDER BY d.created_at DESC LIMIT 10`).all(`%${file_path}%`);
-      if (fileDiffs.length > 0) {
-        lines.push("DIFFS:");
-        for (const d of fileDiffs)
-          lines.push(`  [${d.created_at?.slice(0, 10)}] ${d.change_type ?? "modified"} \u2014 ${d.summary ?? ""}`);
-      }
-    } catch {
-    }
-    try {
-      const fileErrors = db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE files_involved LIKE ? ORDER BY last_seen DESC LIMIT 5`).all(`%${file_path}%`);
-      if (fileErrors.length > 0) {
-        lines.push("ERRORS:");
-        for (const e of fileErrors)
-          lines.push(`  [${e.severity}] ${e.error_message}${e.fix_description ? " \u2192 " + e.fix_description : ""}`);
-      }
-    } catch {
-    }
-    try {
-      const fileDecisions = db2.prepare(`SELECT title, category, created_at FROM decisions WHERE files_affected LIKE ? ORDER BY created_at DESC LIMIT 5`).all(`%${file_path}%`);
-      if (fileDecisions.length > 0) {
-        lines.push("DECISIONS:");
-        for (const d of fileDecisions)
-          lines.push(`  [${d.category}] ${d.title}`);
-      }
-    } catch {
-    }
-    try {
-      const rawDiffs = db2.prepare("SELECT diff_content FROM diffs WHERE file_path LIKE ? ORDER BY created_at DESC LIMIT 5").all("%" + file_path + "%");
-      const fnChanges = [];
-      for (const d of rawDiffs) {
-        if (!d.diff_content)
-          continue;
-        for (const fileDiff of parseDiff(d.diff_content)) {
-          const s = summarizeFunctionChanges(fileDiff);
-          if (!s.includes("no changes"))
-            fnChanges.push("  " + s);
-        }
-      }
-      if (fnChanges.length > 0) {
-        lines.push("FUNCTION CHANGES:");
-        lines.push(...fnChanges);
-      }
-    } catch {
-    }
-    return { content: [{ type: "text", text: lines.join("\n") || "No history found." }] };
-  });
-  server2.tool("cortex_snapshot", "Get a concise brain snapshot \u2014 top state, intents, mood, drift, anchors", {}, async () => {
-    const db2 = getDb();
-    const md = [`# Brain Snapshot \u2014 ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 16).replace("T", " ")}`, ""];
-    try {
-      const moodSessions = db2.prepare(`SELECT mood_score FROM sessions WHERE mood_score IS NOT NULL ORDER BY started_at DESC LIMIT 7`).all();
-      if (moodSessions.length > 0) {
-        const avg = moodSessions.reduce((s, r) => s + r.mood_score, 0) / moodSessions.length;
-        md.push(`**Mood:** ${avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative"} (${avg.toFixed(1)}/5)`);
-      }
-    } catch {
-    }
-    try {
-      const open = db2.prepare(`SELECT description, priority FROM unfinished WHERE resolved_at IS NULL ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END LIMIT 5`).all();
-      if (open.length > 0) {
-        md.push("");
-        md.push(`## Open Items (${open.length})`);
-        for (const u of open)
-          md.push(`- [${u.priority}] ${u.description}`);
-      }
-    } catch {
-    }
-    try {
-      const intents = db2.prepare(`SELECT description FROM unfinished WHERE context='intent' AND resolved_at IS NULL LIMIT 3`).all();
-      if (intents.length > 0) {
-        md.push("");
-        md.push("## Intents");
-        for (const i of intents)
-          md.push(`- ${i.description.replace("[INTENT] ", "")}`);
-      }
-    } catch {
-    }
-    try {
-      const anchors = db2.prepare(`SELECT topic, priority FROM attention_anchors ORDER BY priority DESC LIMIT 5`).all();
-      if (anchors.length > 0) {
-        md.push("");
-        md.push("## Attention Anchors");
-        for (const a of anchors)
-          md.push(`- ${a.topic} (p${a.priority})`);
-      }
-    } catch {
-    }
-    try {
-      const drift = db2.prepare(`SELECT description FROM unfinished WHERE description LIKE '[DRIFT]%' AND resolved_at IS NULL LIMIT 3`).all();
-      if (drift.length > 0) {
-        md.push("");
-        md.push("## Drift Warnings");
-        for (const d of drift)
-          md.push(`- ${d.description}`);
-      }
-    } catch {
-    }
-    try {
-      const stale = db2.prepare(`SELECT COUNT(*) as c FROM decisions WHERE stale=1`).get();
-      if (stale?.c > 0) {
-        md.push("");
-        md.push(`## Stale Decisions: ${stale.c} (>90 days old \u2014 review needed)`);
-      }
-    } catch {
-    }
-    try {
-      const recent = db2.prepare(`
-          SELECT id, started_at, summary, key_changes FROM sessions
-          WHERE status='completed' AND summary IS NOT NULL
-          ORDER BY started_at DESC LIMIT 10
-        `).all();
-      if (recent.length > 0) {
-        md.push("");
-        md.push("## Recent Sessions");
-        for (let i = 0; i < recent.length; i++) {
-          const s = recent[i];
-          const date5 = s.started_at?.slice(0, 10) ?? "?";
-          if (i < 3) {
-            md.push(`- [${date5}] ${s.summary}`);
-            if (s.key_changes) {
-              try {
-                const changes = JSON.parse(s.key_changes);
-                for (const c of changes.slice(0, 3)) {
-                  md.push(`  - ${c.action}: ${c.file} -- ${c.description}`);
-                }
-              } catch {
-              }
-            }
-          } else {
-            const summary = s.summary ?? "";
-            md.push(`- [${date5}] ${summary.slice(0, 80)}${summary.length > 80 ? "..." : ""}`);
-          }
-        }
-      }
-    } catch {
-    }
-    try {
-      const recentDecisions = db2.prepare(`
-          SELECT id, title, category, reasoning FROM decisions
-          WHERE archived_at IS NULL AND superseded_by IS NULL
-            AND created_at > datetime('now', '-7 days')
-          ORDER BY created_at DESC LIMIT 5
-        `).all();
-      const olderDecisionsCount = db2.prepare(`
-          SELECT COUNT(*) as c FROM decisions
-          WHERE archived_at IS NULL AND superseded_by IS NULL
-            AND created_at <= datetime('now', '-7 days')
-        `).get()?.c ?? 0;
-      if (recentDecisions.length > 0 || olderDecisionsCount > 0) {
-        md.push("");
-        md.push("## Decisions");
-        for (const d of recentDecisions) {
-          const r = d.reasoning ?? "";
-          md.push(`- [${d.category}] **${d.title}** -- ${r.slice(0, 100)}${r.length > 100 ? "..." : ""}`);
-        }
-        if (olderDecisionsCount > 0) {
-          md.push(`- _(+ ${olderDecisionsCount} older -- use cortex_list_decisions to view)_`);
-        }
-      }
-    } catch {
-    }
-    try {
-      const autoBlocks = db2.prepare(`
-          SELECT anti_pattern, correct_pattern FROM learnings
-          WHERE auto_block = 1 AND archived_at IS NULL
-        `).all();
-      const recentLearnings = db2.prepare(`
-          SELECT anti_pattern, correct_pattern, severity FROM learnings
-          WHERE auto_block = 0 AND archived_at IS NULL
-            AND created_at > datetime('now', '-7 days')
-          ORDER BY created_at DESC LIMIT 5
-        `).all();
-      const olderLearningsCount = db2.prepare(`
-          SELECT COUNT(*) as c FROM learnings
-          WHERE auto_block = 0 AND archived_at IS NULL
-            AND created_at <= datetime('now', '-7 days')
-        `).get()?.c ?? 0;
-      if (autoBlocks.length > 0 || recentLearnings.length > 0 || olderLearningsCount > 0) {
-        md.push("");
-        md.push("## Learnings");
-        if (autoBlocks.length > 0) {
-          md.push("**Auto-Block Rules:**");
-          for (const l of autoBlocks) {
-            md.push(`- NEVER: ${l.anti_pattern} -- DO: ${l.correct_pattern}`);
-          }
-        }
-        for (const l of recentLearnings) {
-          md.push(`- [${l.severity}] ${l.anti_pattern} -- ${l.correct_pattern}`);
-        }
-        if (olderLearningsCount > 0) {
-          md.push(`- _(+ ${olderLearningsCount} older -- use cortex_list_learnings to view)_`);
-        }
-      }
-    } catch {
-    }
-    return { content: [{ type: "text", text: md.join("\n") }] };
-  });
-  server2.tool("cortex_dejavu", "Check if a task looks similar to past sessions (deja-vu detection)", { task_description: external_exports3.string() }, async ({ task_description }) => {
-    const db2 = getDb();
-    const keywords = task_description.split(/\s+/).filter((w) => w.length > 4).slice(0, 8);
-    if (keywords.length === 0)
-      return { content: [{ type: "text", text: "No keywords to match." }] };
-    const lines = [];
-    for (const kw of keywords) {
-      try {
-        const matches = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? AND status='completed' ORDER BY started_at DESC LIMIT 2`).all(`%${kw}%`);
-        for (const m of matches)
-          lines.push(`[${m.started_at?.slice(0, 10)}] ${m.summary}`);
-      } catch {
-      }
-    }
-    const unique = [...new Set(lines)].slice(0, 10);
-    return { content: [{ type: "text", text: unique.length > 0 ? `Deja-vu matches:
-${unique.join("\n")}` : "No similar sessions found." }] };
-  });
-  server2.tool("cortex_check_blind_spots", "Find project files not touched in recent sessions \u2014 potential blind spots", { days: external_exports3.number().optional().default(14), limit: external_exports3.number().optional().default(10) }, async ({ days, limit }) => {
-    const db2 = getDb();
-    try {
-      const untouched = db2.prepare(`
-          SELECT path, change_count, last_changed FROM project_files
-          WHERE (last_changed IS NULL OR last_changed < datetime('now', ? || ' days'))
-            AND change_count > 0
-          ORDER BY change_count DESC LIMIT ?
-        `).all(`-${days}`, limit);
-      if (untouched.length === 0) {
-        return { content: [{ type: "text", text: "No blind spots detected \u2014 all active files touched recently." }] };
-      }
-      const lines = [`Blind spots (not touched in ${days}d):`];
-      for (const f of untouched) {
-        lines.push(`  ${f.path} (${f.change_count} total changes, last: ${f.last_changed?.slice(0, 10) ?? "never"})`);
-      }
-      return { content: [{ type: "text", text: lines.join("\n") }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_forget", "Archive (soft-delete) decisions, errors, and learnings matching a topic", { topic: external_exports3.string().describe("Keyword or phrase to match against") }, async ({ topic }) => {
-    const db2 = getDb();
-    const pat = `%${topic}%`;
-    let archived = 0;
-    try {
-      const r = db2.prepare(`UPDATE decisions SET archived=1 WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1`).run(pat, pat);
-      archived += Number(r.changes);
-    } catch {
-    }
-    try {
-      const r = db2.prepare(`UPDATE errors SET archived=1 WHERE (error_message LIKE ? OR root_cause LIKE ?) AND archived!=1`).run(pat, pat);
-      archived += Number(r.changes);
-    } catch {
-    }
-    try {
-      const r = db2.prepare(`UPDATE learnings SET archived=1 WHERE (anti_pattern LIKE ? OR context LIKE ?) AND archived!=1`).run(pat, pat);
-      archived += Number(r.changes);
-    } catch {
-    }
-    return { content: [{ type: "text", text: `Archived ${archived} item(s) matching "${topic}".` }] };
-  });
-  server2.tool("cortex_get_mood", "Get current system mood based on rolling average of last 7 sessions", {}, async () => {
-    const db2 = getDb();
-    try {
-      const sessions = db2.prepare(`
-          SELECT emotional_tone, mood_score, started_at FROM sessions
-          WHERE mood_score IS NOT NULL AND status='completed'
-          ORDER BY started_at DESC LIMIT 7
-        `).all();
-      if (sessions.length === 0) {
-        return { content: [{ type: "text", text: "No mood data yet. Mood scoring runs after sessions complete." }] };
-      }
-      const avg = sessions.reduce((s, r) => s + (r.mood_score ?? 3), 0) / sessions.length;
-      const mood = avg >= 4 ? "positive" : avg >= 3 ? "neutral" : "negative";
-      const lines = [
-        `System Mood: ${mood} (avg ${avg.toFixed(1)}/5 over last ${sessions.length} sessions)`,
-        "",
-        "Recent sessions:",
-        ...sessions.map((s) => `  [${s.started_at?.slice(0, 10)}] ${s.emotional_tone ?? "unknown"} (${s.mood_score}/5)`)
-      ];
-      return { content: [{ type: "text", text: lines.join("\n") }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_cross_project_search", "Search across all projects in this Cortex DB", { query: external_exports3.string(), limit: external_exports3.number().optional().default(10) }, async ({ query, limit }) => {
-    const db2 = getDb();
-    const pat = `%${query}%`;
-    const lines = [];
-    try {
-      const sessions = db2.prepare(`SELECT started_at, summary FROM sessions WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?`).all(pat, limit);
-      for (const s of sessions)
-        lines.push(`[SESSION] ${s.started_at?.slice(0, 10)}: ${s.summary}`);
-    } catch {
-    }
-    try {
-      const decisions = db2.prepare(`SELECT title, category FROM decisions WHERE (title LIKE ? OR reasoning LIKE ?) AND archived!=1 LIMIT ?`).all(pat, pat, limit);
-      for (const d of decisions)
-        lines.push(`[DECISION/${d.category}] ${d.title}`);
-    } catch {
-    }
-    try {
-      const sharedLearnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE shared=1 AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
-      for (const l of sharedLearnings)
-        lines.push(`[SHARED LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
-      const otherLearnings = db2.prepare(`SELECT anti_pattern, correct_pattern FROM learnings WHERE (shared IS NULL OR shared=0) AND (anti_pattern LIKE ? OR context LIKE ?) AND archived_at IS NULL LIMIT ?`).all(pat, pat, limit);
-      for (const l of otherLearnings)
-        lines.push(`[LEARNING] ${l.anti_pattern} \u2192 ${l.correct_pattern}`);
-    } catch {
-    }
-    try {
-      const notes = db2.prepare(`SELECT text, project, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(pat, limit);
-      for (const n of notes)
-        lines.push(`[NOTE${n.project ? "/" + n.project : ""}] ${n.text.slice(0, 100)}`);
-    } catch {
-    }
-    return { content: [{ type: "text", text: lines.join("\n") || "No cross-project results found." }] };
-  });
-}
-
-// dist/tools/stats.js
-init_db();
-function registerStatsTools(server2) {
-  server2.tool("cortex_get_health", "Get project health score with metrics and trend", {}, async () => {
-    const db2 = getDb();
-    const snapshot = getLatestSnapshot();
-    const history = getHealthHistory(7);
-    const metrics = calculateHealth();
-    const score = computeScore(metrics);
-    let agentHealth = null;
-    try {
-      agentHealth = db2.prepare(`
-          SELECT agent_name,
-            COUNT(*) as runs,
-            ROUND(100.0 * SUM(success) / COUNT(*), 1) as success_rate_pct,
-            MAX(CASE WHEN success=0 THEN error_message END) as last_error
-          FROM agent_runs
-          WHERE started_at > datetime('now', '-30 days')
-          GROUP BY agent_name
-        `).all();
-    } catch {
-    }
-    let costSummary = null;
-    try {
-      costSummary = db2.prepare(`
-          SELECT
-            COUNT(*) as sessions_with_metrics,
-            ROUND(AVG(cost_usd), 4) as avg_cost_usd,
-            ROUND(SUM(cost_usd), 4) as total_cost_usd_7d,
-            ROUND(CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1) as cache_hit_rate_pct
-          FROM session_metrics
-          WHERE recorded_at > datetime('now', '-7 days')
-        `).get();
-    } catch {
-    }
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({ currentScore: score, metrics, latestSnapshot: snapshot, recentHistory: history, agentHealth, costSummary }, null, 2)
-      }]
-    };
-  });
-  server2.tool("cortex_get_stats", "Get overall project statistics: sessions, decisions, errors, files, learnings", {}, async () => {
-    const db2 = getDb();
-    const q = (sql) => db2.prepare(sql).get().c;
-    const stats = {
-      sessions: q("SELECT COUNT(*) as c FROM sessions"),
-      decisions: q("SELECT COUNT(*) as c FROM decisions"),
-      errors: q("SELECT COUNT(*) as c FROM errors"),
-      learnings: q("SELECT COUNT(*) as c FROM learnings"),
-      conventions: q("SELECT COUNT(*) as c FROM conventions"),
-      files_tracked: q("SELECT COUNT(*) as c FROM project_files"),
-      modules: q("SELECT COUNT(*) as c FROM project_modules"),
-      dependencies: q("SELECT COUNT(*) as c FROM dependencies"),
-      unfinished_open: q("SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL")
-    };
-    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
-  });
-  server2.tool("cortex_get_access_stats", "Show top accessed decisions, learnings and errors -- what gets used most", {}, async () => {
-    const db2 = getDb();
-    const topDecisions = db2.prepare(`
-        SELECT id, title, category, access_count, last_accessed
-        FROM decisions WHERE archived_at IS NULL
-        ORDER BY access_count DESC LIMIT 10
-      `).all();
-    const topLearnings = db2.prepare(`
-        SELECT id, anti_pattern, severity, access_count, last_accessed
-        FROM learnings WHERE archived_at IS NULL
-        ORDER BY access_count DESC LIMIT 10
-      `).all();
-    const topErrors = db2.prepare(`
-        SELECT id, error_message, severity, access_count, last_accessed
-        FROM errors WHERE archived_at IS NULL
-        ORDER BY access_count DESC LIMIT 10
-      `).all();
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({ top_decisions: topDecisions, top_learnings: topLearnings, top_errors: topErrors }, null, 2)
-      }]
-    };
-  });
-  server2.tool("cortex_run_pruning", "Manually run Ebbinghaus pruning \u2014 archives unused decisions/learnings/errors. Runs automatically on session start.", {}, async () => {
-    getDb();
-    const result = runAllPruning();
-    const total = result.decisions_archived + result.learnings_archived + result.errors_archived;
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          archived: result,
-          total_archived: total,
-          message: total > 0 ? `${total} item(s) archived based on Ebbinghaus forgetting curve.` : "Nothing to archive -- all items are fresh or recently accessed."
-        }, null, 2)
-      }]
-    };
-  });
-  server2.tool("cortex_get_timeline", "Get monthly activity timeline", { limit: external_exports3.number().optional().default(12) }, async ({ limit }) => {
-    const db2 = getDb();
-    try {
-      const rows = db2.prepare(`
-          SELECT strftime('%Y-%m', started_at) as month, COUNT(*) as sessions,
-                 GROUP_CONCAT(SUBSTR(summary, 1, 60), ' | ') as summaries
-          FROM sessions WHERE summary IS NOT NULL
-          GROUP BY month ORDER BY month DESC LIMIT ?
-        `).all(limit);
-      const lines = rows.map((r) => `[${r.month}] ${r.sessions} sessions \u2014 ${r.summaries?.slice(0, 200) ?? ""}`);
-      return { content: [{ type: "text", text: lines.join("\n") || "No timeline data." }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_compare_periods", "Compare activity between two date ranges", {
-    from_a: external_exports3.string().describe("Start of period A (YYYY-MM-DD)"),
-    to_a: external_exports3.string().describe("End of period A (YYYY-MM-DD)"),
-    from_b: external_exports3.string().describe("Start of period B (YYYY-MM-DD)"),
-    to_b: external_exports3.string().describe("End of period B (YYYY-MM-DD)")
-  }, async ({ from_a, to_a, from_b, to_b }) => {
-    const db2 = getDb();
-    const count = (sql, ...p) => {
-      try {
-        return db2.prepare(sql).get(...p)?.c ?? 0;
-      } catch {
-        return 0;
-      }
-    };
-    const periodA = {
-      sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_a, to_a),
-      errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_a, to_a),
-      fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_a, to_a),
-      files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_a, to_a)
-    };
-    const periodB = {
-      sessions: count(`SELECT COUNT(*) as c FROM sessions WHERE started_at BETWEEN ? AND ?`, from_b, to_b),
-      errors: count(`SELECT COUNT(*) as c FROM errors WHERE first_seen BETWEEN ? AND ?`, from_b, to_b),
-      fixes: count(`SELECT COUNT(*) as c FROM errors WHERE fix_description IS NOT NULL AND last_seen BETWEEN ? AND ?`, from_b, to_b),
-      files: count(`SELECT COUNT(DISTINCT file_path) as c FROM diffs WHERE created_at BETWEEN ? AND ?`, from_b, to_b)
-    };
-    return { content: [{ type: "text", text: JSON.stringify({ periodA: { range: `${from_a} to ${to_a}`, ...periodA }, periodB: { range: `${from_b} to ${to_b}`, ...periodB } }, null, 2) }] };
-  });
-  server2.tool("cortex_suggest_claude_md", "Suggest CLAUDE.md updates based on new learnings and patterns", {}, async () => {
-    getDb();
-    const recentLearnings = listLearnings({ limit: 10 });
-    const topConventions = listConventions();
-    const frequentErrors = listErrors({ limit: 5 });
-    const suggestions = [];
-    for (const learning of recentLearnings) {
-      if (learning.occurrences >= 2) {
-        suggestions.push(`New Gotcha: ${learning.anti_pattern} \u2192 ${learning.correct_pattern} (occurred ${learning.occurrences}x)`);
-      }
-    }
-    for (const conv of topConventions) {
-      if (conv.violation_count >= 3 && conv.source !== "claude-md") {
-        suggestions.push(`Convention to add: ${conv.name} \u2014 ${conv.description} (${conv.violation_count} violations)`);
-      }
-    }
-    for (const error48 of frequentErrors) {
-      if (error48.occurrences >= 3 && error48.prevention_rule) {
-        suggestions.push(`Error pattern to document: ${error48.error_message} (${error48.occurrences}x)`);
-      }
-    }
-    return {
-      content: [{
-        type: "text",
-        text: suggestions.length > 0 ? JSON.stringify({ suggestions }, null, 2) : '{"suggestions": [], "message": "No new suggestions \u2014 CLAUDE.md is up to date."}'
-      }]
-    };
-  });
-  server2.tool("cortex_session_metrics", "Show token usage and cost metrics per session", {
-    limit: external_exports3.number().optional().default(10).describe("Number of recent sessions to show. input_examples: [5, 20]"),
-    aggregate: external_exports3.boolean().optional().default(false).describe("If true, return averages across all sessions instead of per-session list. input_examples: [true]")
-  }, async ({ limit, aggregate }) => {
-    const db2 = getDb();
-    try {
-      if (aggregate) {
-        const row = db2.prepare(`
-            SELECT
-              COUNT(*) as sessions,
-              ROUND(AVG(input_tokens), 0) as avg_input_tokens,
-              ROUND(AVG(output_tokens), 0) as avg_output_tokens,
-              ROUND(AVG(cache_read_tokens), 0) as avg_cache_read,
-              ROUND(AVG(cost_usd), 4) as avg_cost_usd,
-              ROUND(SUM(cost_usd), 4) as total_cost_usd,
-              ROUND(CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1) as cache_hit_rate_pct
-            FROM session_metrics
-          `).get();
-        return { content: [{ type: "text", text: JSON.stringify(row, null, 2) }] };
-      }
-      const rows = db2.prepare(`
-          SELECT sm.*, s.summary
-          FROM session_metrics sm
-          LEFT JOIN sessions s ON s.id = sm.session_id
-          ORDER BY sm.recorded_at DESC
-          LIMIT ?
-        `).all(limit);
-      return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_backfill_embeddings", "Generate embeddings for all existing entities that don't have one yet", {}, async () => {
-    const db2 = getDb();
-    const { embed: embed2, storeEmbedding: storeEmbedding2, buildEmbeddingText: buildEmbeddingText2 } = await Promise.resolve().then(() => (init_embeddings(), embeddings_exports));
-    const configs = [
-      { type: "learning", table: "learnings", idCol: "id", fields: ["anti_pattern", "correct_pattern", "context"] },
-      { type: "decision", table: "decisions", idCol: "id", fields: ["title", "reasoning"] },
-      { type: "error", table: "errors", idCol: "id", fields: ["error_message", "root_cause", "fix_description"] },
-      { type: "note", table: "notes", idCol: "id", fields: ["text"] },
-      { type: "session", table: "sessions", idCol: "id", fields: ["summary", "key_changes"] },
-      { type: "todo", table: "unfinished", idCol: "id", fields: ["description", "context"] }
-    ];
-    let generated = 0;
-    let skipped = 0;
-    let errCount = 0;
-    for (const cfg of configs) {
-      try {
-        const rows = db2.prepare(`
-            SELECT s.* FROM ${cfg.table} s
-            LEFT JOIN embeddings e ON e.entity_type = ? AND e.entity_id = CAST(s.${cfg.idCol} AS TEXT)
-            WHERE e.id IS NULL
-          `).all(cfg.type);
-        for (const row of rows) {
-          try {
-            const fieldMap = {};
-            for (const f of cfg.fields)
-              fieldMap[f] = row[f];
-            const text = buildEmbeddingText2(fieldMap);
-            if (!text || text.length < 10) {
-              skipped++;
-              continue;
-            }
-            const vec = await embed2(text);
-            storeEmbedding2(cfg.type, String(row[cfg.idCol]), vec);
-            generated++;
-          } catch {
-            errCount++;
-          }
-        }
-      } catch {
-        errCount++;
-      }
-    }
-    return {
-      content: [{
-        type: "text",
-        text: `Backfill complete: ${generated} embeddings generated, ${skipped} skipped (too short), ${errCount} errors.`
-      }]
-    };
-  });
-  server2.tool("cortex_agent_status", "Show daemon agent run history with success rates and errors", {
-    limit: external_exports3.number().optional().default(20).describe("Max number of agent runs to return. input_examples: [10, 50]"),
-    agent_name: external_exports3.string().optional().describe('Filter by agent name (learner, architect, context, etc.). input_examples: ["learner", "architect"]')
-  }, async ({ limit, agent_name }) => {
-    const db2 = getDb();
-    try {
-      const runs = agent_name ? db2.prepare(`SELECT * FROM agent_runs WHERE agent_name = ? ORDER BY started_at DESC LIMIT ?`).all(agent_name, limit) : db2.prepare(`SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?`).all(limit);
-      const summary = db2.prepare(`
-          SELECT agent_name,
-            COUNT(*) as total_runs,
-            SUM(success) as successful,
-            ROUND(AVG(duration_ms), 0) as avg_duration_ms,
-            SUM(items_saved) as total_items_saved,
-            MAX(started_at) as last_run
-          FROM agent_runs
-          GROUP BY agent_name
-          ORDER BY last_run DESC
-        `).all();
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ summary, recent_runs: runs }, null, 2)
-        }]
-      };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-}
-
-// dist/tools/profile.js
-init_db();
-function registerProfileTools(server2) {
-  server2.tool("cortex_update_profile", "Update user profile (name, role, working style, expertise, communication preference)", {
-    name: external_exports3.string().optional(),
-    role: external_exports3.string().optional(),
-    working_style: external_exports3.string().optional(),
-    expertise_areas: external_exports3.string().optional(),
-    communication_preference: external_exports3.string().optional()
-  }, async (input) => {
-    const db2 = getDb();
-    db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, communication_preference, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(id) DO UPDATE SET
-          name=COALESCE(excluded.name, name),
-          role=COALESCE(excluded.role, role),
-          working_style=COALESCE(excluded.working_style, working_style),
-          expertise_areas=COALESCE(excluded.expertise_areas, expertise_areas),
-          communication_preference=COALESCE(excluded.communication_preference, communication_preference),
-          updated_at=datetime('now')`).run(input.name ?? null, input.role ?? null, input.working_style ?? null, input.expertise_areas ?? null, input.communication_preference ?? null);
-    return { content: [{ type: "text", text: "Profile updated." }] };
-  });
-  server2.tool("cortex_get_profile", "Get the user profile", {}, async () => {
-    const db2 = getDb();
-    try {
-      const profile = db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get();
-      if (!profile)
-        return { content: [{ type: "text", text: "No profile set. Use cortex_update_profile to create one." }] };
-      const lines = [
-        `Name: ${profile.name ?? "(not set)"}`,
-        `Role: ${profile.role ?? "(not set)"}`,
-        `Working Style: ${profile.working_style ?? "(not set)"}`,
-        `Expertise: ${profile.expertise_areas ?? "(not set)"}`,
-        `Communication: ${profile.communication_preference ?? "(not set)"}`,
-        `Updated: ${profile.updated_at?.slice(0, 10) ?? "never"}`
-      ];
-      return { content: [{ type: "text", text: lines.join("\n") }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_onboard", "Run first-time onboarding: set up user profile and attention anchors", {
-    name: external_exports3.string().describe("Your name"),
-    role: external_exports3.string().describe("Your role (e.g. solo developer, lead engineer)"),
-    working_style: external_exports3.string().describe("How you prefer to work (e.g. test-driven, prototype-first)"),
-    expertise_areas: external_exports3.string().describe("Your main areas of expertise (comma-separated)"),
-    anchors: external_exports3.array(external_exports3.string()).describe("3-5 topics you always want Cortex to track").optional()
-  }, async ({ name, role, working_style, expertise_areas, anchors }) => {
-    const db2 = getDb();
-    const ts = (/* @__PURE__ */ new Date()).toISOString();
-    db2.prepare(`INSERT INTO user_profile (id, name, role, working_style, expertise_areas, updated_at)
-        VALUES (1, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,
-          working_style=excluded.working_style, expertise_areas=excluded.expertise_areas,
-          updated_at=datetime('now')`).run(name, role, working_style, expertise_areas);
-    const addedAnchors = [];
-    if (anchors && anchors.length > 0) {
-      for (const topic of anchors.slice(0, 5)) {
-        try {
-          db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, 8)`).run(topic);
-          addedAnchors.push(topic);
-        } catch {
-        }
-      }
-    }
-    db2.prepare(`INSERT INTO meta (key, value) VALUES ('onboarding_complete', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ts);
-    const lines = [
-      `Welcome, ${name}! Cortex is now configured.`,
-      `Role: ${role}`,
-      `Working style: ${working_style}`,
-      `Expertise: ${expertise_areas}`,
-      addedAnchors.length > 0 ? `Anchors: ${addedAnchors.join(", ")}` : "",
-      "",
-      "Cortex will now track your sessions, decisions, errors, and learnings.",
-      "Use /resume to get a re-entry brief at any time."
-    ].filter((l) => l !== "");
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  });
-  server2.tool("cortex_export", "Export brain data as JSON or Markdown", { format: external_exports3.enum(["json", "markdown"]).optional().default("markdown") }, async ({ format }) => {
-    const db2 = getDb();
-    try {
-      const data = {
-        exported_at: (/* @__PURE__ */ new Date()).toISOString(),
-        profile: db2.prepare(`SELECT * FROM user_profile WHERE id=1`).get() ?? {},
-        sessions: db2.prepare(`SELECT id, started_at, summary, tags, emotional_tone, mood_score FROM sessions WHERE status='completed' ORDER BY started_at DESC LIMIT 50`).all(),
-        decisions: db2.prepare(`SELECT title, category, reasoning, created_at FROM decisions WHERE archived!=1 ORDER BY created_at DESC LIMIT 30`).all(),
-        learnings: db2.prepare(`SELECT anti_pattern, correct_pattern, severity, occurrences FROM learnings WHERE archived!=1 ORDER BY occurrences DESC LIMIT 50`).all(),
-        errors: db2.prepare(`SELECT error_message, fix_description, severity FROM errors WHERE archived!=1 ORDER BY occurrences DESC LIMIT 30`).all(),
-        unfinished: db2.prepare(`SELECT description, priority, created_at FROM unfinished WHERE resolved_at IS NULL ORDER BY created_at DESC`).all(),
-        notes: (() => {
-          try {
-            return db2.prepare(`SELECT text, tags, created_at FROM notes ORDER BY created_at DESC LIMIT 30`).all();
-          } catch {
-            return [];
-          }
-        })()
-      };
-      if (format === "json") {
-        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-      }
-      const md = [`# Brain Export \u2014 ${data.exported_at.slice(0, 10)}`, ""];
-      md.push(`## Profile`);
-      const p = data.profile;
-      if (p?.name)
-        md.push(`**${p.name}** \xB7 ${p.role ?? ""} \xB7 ${p.working_style ?? ""}`);
-      md.push("");
-      md.push(`## Open Items (${data.unfinished.length})`);
-      for (const u of data.unfinished)
-        md.push(`- [${u.priority}] ${u.description}`);
-      md.push("");
-      md.push(`## Key Learnings (${data.learnings.length})`);
-      for (const l of data.learnings)
-        md.push(`- **${l.anti_pattern}** \u2192 ${l.correct_pattern} (${l.occurrences}x)`);
-      md.push("");
-      md.push(`## Recent Sessions (${data.sessions.length})`);
-      for (const s of data.sessions)
-        md.push(`- [${s.started_at?.slice(0, 10)}] ${s.summary ?? ""}`);
-      return { content: [{ type: "text", text: md.join("\n") }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Export error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_add_note", "Add scratch pad note", {
-    text: external_exports3.string(),
-    tags: external_exports3.array(external_exports3.string()).optional(),
-    session_id: external_exports3.string().optional(),
-    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional().describe('Link this note to an entity. Example: "decision"'),
-    entity_id: external_exports3.number().optional().describe("ID of the linked entity. Example: 42")
-  }, async ({ text, tags, session_id, entity_type, entity_id }) => {
-    const r = getDb().prepare(`INSERT INTO notes (text,tags,session_id,entity_type,entity_id) VALUES (?,?,?,?,?)`).run(text, tags ? JSON.stringify(tags) : null, session_id ?? null, entity_type ?? null, entity_id ?? null);
-    const noteId = Number(r.lastInsertRowid);
-    Promise.resolve().then(() => (init_embed_hooks(), embed_hooks_exports)).then(({ embedAsync: embedAsync2 }) => embedAsync2("note", noteId, { text })).catch(() => {
-    });
-    return { content: [{ type: "text", text: `Note saved (id: ${noteId})` }] };
-  });
-  server2.tool("cortex_list_notes", "List notes, optionally filtered by search term", {
-    limit: external_exports3.number().optional().default(20),
-    search: external_exports3.string().optional(),
-    entity_type: external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]).optional().describe("Filter by linked entity type"),
-    entity_id: external_exports3.number().optional().describe("Filter by linked entity ID")
-  }, async ({ limit, search, entity_type, entity_id }) => {
-    const db2 = getDb();
-    if (entity_id && !entity_type) {
-      return { content: [{ type: "text", text: "Error: entity_id requires entity_type" }] };
-    }
-    let notes;
-    if (entity_type && entity_id && search) {
-      notes = db2.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? AND text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, `%${search}%`, limit);
-    } else if (entity_type && entity_id) {
-      notes = db2.prepare(`SELECT * FROM notes WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT ?`).all(entity_type, entity_id, limit);
-    } else if (search) {
-      notes = db2.prepare(`SELECT * FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?`).all(`%${search}%`, limit);
-    } else {
-      notes = db2.prepare(`SELECT * FROM notes ORDER BY created_at DESC LIMIT ?`).all(limit);
-    }
-    return { content: [{ type: "text", text: notes.map((n) => {
-      const link = n.entity_type ? ` [${n.entity_type}:${n.entity_id}]` : "";
-      return `[${n.id}] ${n.created_at.slice(0, 10)}${link}: ${n.text}`;
-    }).join("\n") || "No notes." }] };
-  });
-  server2.tool("cortex_delete_note", "Delete note by id", {
-    id: external_exports3.number()
-  }, async ({ id }) => {
-    getDb().prepare(`DELETE FROM notes WHERE id=?`).run(id);
-    return { content: [{ type: "text", text: `Deleted note ${id}` }] };
-  });
-  server2.tool("cortex_add_anchor", "Add an attention anchor \u2014 a topic that always gets priority context", { topic: external_exports3.string(), priority: external_exports3.number().optional().default(5) }, async ({ topic, priority }) => {
-    const db2 = getDb();
-    try {
-      db2.prepare(`INSERT INTO attention_anchors (topic, priority) VALUES (?, ?)`).run(topic, priority);
-      return { content: [{ type: "text", text: `Anchor added: "${topic}" (priority ${priority})` }] };
-    } catch {
-      return { content: [{ type: "text", text: `Anchor "${topic}" already exists or could not be added.` }] };
-    }
-  });
-  server2.tool("cortex_remove_anchor", "Remove an attention anchor by topic", { topic: external_exports3.string() }, async ({ topic }) => {
-    const db2 = getDb();
-    const r = db2.prepare(`DELETE FROM attention_anchors WHERE topic LIKE ?`).run(`%${topic}%`);
-    return { content: [{ type: "text", text: `Removed ${r.changes} anchor(s) matching "${topic}".` }] };
-  });
-  server2.tool("cortex_list_anchors", "List all attention anchors", {}, async () => {
-    const db2 = getDb();
-    try {
-      const anchors = db2.prepare(`SELECT id, topic, priority, last_touched FROM attention_anchors ORDER BY priority DESC, created_at ASC`).all();
-      if (anchors.length === 0)
-        return { content: [{ type: "text", text: "No attention anchors set." }] };
-      const lines = anchors.map((a) => `[${a.id}] ${a.topic} (priority ${a.priority}, last touched: ${a.last_touched?.slice(0, 10) ?? "never"})`);
-      return { content: [{ type: "text", text: lines.join("\n") }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e}` }] };
-    }
-  });
-  server2.tool("cortex_set_project", "Set the active project name for context tagging", { project: external_exports3.string() }, async ({ project }) => {
-    const db2 = getDb();
-    db2.prepare(`INSERT INTO meta (key, value) VALUES ('active_project', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(project);
-    return { content: [{ type: "text", text: `Active project set to: "${project}"` }] };
-  });
-  server2.tool("cortex_get_conventions", "List active conventions with violation counts", {
-    scope: external_exports3.string().optional()
-  }, async ({ scope }) => {
-    getDb();
-    const convs = listConventions(scope);
-    return { content: [{ type: "text", text: JSON.stringify(convs, null, 2) }] };
-  });
-  server2.tool("cortex_add_convention", "Add or update a coding convention with detection/violation patterns", {
-    name: external_exports3.string().describe('Short convention name. Example: "No raw SQL in route handlers" or "Always use prepared statements"'),
-    description: external_exports3.string().describe('What the convention requires. Example: "All DB queries must go through module functions in server/src/modules/, never inline SQL in index.ts"'),
-    detection_pattern: external_exports3.string().optional().describe('Regex to detect correct usage. Example: "import.*modules/"'),
-    violation_pattern: external_exports3.string().optional().describe('Regex to detect violations. Example: "db\\.prepare\\(.*SELECT.*\\).*index\\.ts"'),
-    examples_good: external_exports3.array(external_exports3.string()).optional().describe('Examples of correct code. Example: ["sessions.createSession({ id })", "decisions.addDecision(input)"]'),
-    examples_bad: external_exports3.array(external_exports3.string()).optional().describe(`Examples of incorrect code. Example: ["db.prepare('SELECT * FROM sessions').all()"]`),
-    scope: external_exports3.enum(["global", "frontend", "backend", "database"]).optional(),
-    source: external_exports3.string().optional().describe('Where this convention comes from. Example: "CLAUDE.md" or "code review 2026-02-22"')
-  }, async (input) => {
-    getDb();
-    const conv = addConvention(input);
-    return { content: [{ type: "text", text: JSON.stringify(conv, null, 2) }] };
-  });
-}
-
-// dist/tools/meta.js
-init_db();
-
-// dist/modules/tool-registry.js
-var TOOL_CATEGORIES = {
-  memory: `## Memory & Context Tools
-
-Use these at session start or when resuming work.
-
-- **cortex_snapshot** \u2192 Full brain state: open items, recent sessions, decisions, learnings. Call this first in complex sessions.
-- **cortex_get_context** \u2192 Relevant context for specific files. Pass file paths to get related decisions/errors/sessions.
-- **cortex_list_sessions** \u2192 Recent work history with summaries.
-- **cortex_search** \u2192 BM25/FTS5 full-text search across all stored data (sessions, decisions, errors, learnings).`,
-  decisions: `## Decisions Tools
-
-Use when making architectural or design choices.
-
-- **cortex_add_decision** \u2192 Log WHY a decision was made. Required fields: title, reasoning, category (architecture/convention/bugfix/feature/config/security).
-- **cortex_list_decisions** \u2192 Review existing decisions before making new ones. Check for duplicates.
-- **cortex_mark_decision_reviewed** \u2192 Confirm a decision is still current (resets stale flag).`,
-  errors: `## Errors & Learnings Tools
-
-Use when bugs occur or anti-patterns are identified.
-
-- **cortex_add_error** \u2192 Record a bug with root cause, fix description, and prevention rule.
-- **cortex_update_error** \u2192 Add fix description or prevention rule to existing error.
-- **cortex_list_errors** \u2192 List known errors, filter by severity or file.
-- **cortex_add_learning** \u2192 Record an anti-pattern with correct alternative. Set detection_regex for auto-blocking.
-- **cortex_update_learning** \u2192 Update existing learning (add regex, change severity, toggle auto_block).
-- **cortex_delete_learning** \u2192 Remove a learning entry.
-- **cortex_list_learnings** \u2192 Review known anti-patterns.
-- **cortex_check_regression** \u2192 Check code against known anti-patterns BEFORE writing/editing. ALWAYS call this first.`,
-  map: `## Project Map & Files Tools
-
-Use when exploring or navigating the codebase.
-
-- **cortex_scan_project** \u2192 Scan filesystem and populate architecture map. Run once to index project.
-- **cortex_get_map** \u2192 Architecture overview: modules, layers, files.
-- **cortex_update_map** \u2192 Re-scan and update map after structural changes.
-- **cortex_get_deps** \u2192 Dependency tree and impact analysis for a specific file.
-- **cortex_get_hot_zones** \u2192 Most frequently changed files \u2014 refactoring candidates.
-- **cortex_get_file_history** \u2192 Full history for a file: sessions, diffs, errors.
-- **cortex_blame** \u2192 Same as get_file_history with diff details.
-- **cortex_import_git_history** \u2192 Import git log to populate hot zones.
-- **cortex_index_docs** \u2192 Read CLAUDE.md and docs/ and store as searchable learnings.`,
-  tracking: `## Tracking & TODOs Tools
-
-Use when noting unfinished work or setting reminders.
-
-- **cortex_add_unfinished** \u2192 Track something that needs to be done later. Fields: description, priority (low/medium/high), context.
-- **cortex_get_unfinished** \u2192 List open/unresolved items.
-- **cortex_resolve_unfinished** \u2192 Mark an unfinished item as done.
-- **cortex_add_intent** \u2192 Store what you plan to do next session (shown at next SessionStart).
-- **cortex_snooze** \u2192 Schedule a future session reminder. Use relative (3d/1w) or ISO date.`,
-  notes: `## Notes & Profile Tools
-
-- **cortex_add_note** \u2192 Save scratch pad note with optional tags.
-- **cortex_list_notes** \u2192 List notes, filter by search term.
-- **cortex_delete_note** \u2192 Delete note by id.
-- **cortex_onboard** \u2192 First-time setup: name, role, working style, expertise, anchors.
-- **cortex_update_profile** \u2192 Update user profile fields.
-- **cortex_get_profile** \u2192 Get current user profile.
-- **cortex_export** \u2192 Export brain data as JSON or Markdown.`,
-  intelligence: `## Intelligence Tools
-
-Advanced analysis and pattern detection.
-
-- **cortex_dejavu** \u2192 Check if a task looks similar to past sessions (deja-vu detection). Pass task description.
-- **cortex_check_blind_spots** \u2192 Find project files not touched in recent sessions.
-- **cortex_get_mood** \u2192 Current system mood based on rolling average of last 7 sessions.
-- **cortex_forget** \u2192 Archive decisions/errors/learnings matching a topic keyword.
-- **cortex_cross_project_search** \u2192 Search across all projects in this Cortex DB.
-- **cortex_add_anchor** \u2192 Add attention anchor \u2014 topic that always gets priority context.
-- **cortex_remove_anchor** \u2192 Remove an attention anchor.
-- **cortex_list_anchors** \u2192 List all attention anchors.`,
-  stats: `## Health & Stats Tools
-
-- **cortex_get_health** \u2192 Project health score with metrics and trend.
-- **cortex_get_stats** \u2192 Overall counts: sessions, decisions, errors, files, learnings.
-- **cortex_get_access_stats** \u2192 Top accessed decisions/learnings/errors.
-- **cortex_run_pruning** \u2192 Manually run Ebbinghaus pruning \u2014 archives unused items.
-- **cortex_get_timeline** \u2192 Monthly activity timeline.
-- **cortex_compare_periods** \u2192 Compare activity between two date ranges.
-- **cortex_suggest_claude_md** \u2192 Suggest CLAUDE.md updates based on new learnings.
-- **cortex_set_project** \u2192 Set active project name for context tagging.
-- **cortex_get_conventions** \u2192 List active coding conventions with violation counts.
-- **cortex_add_convention** \u2192 Add or update a coding convention.`,
-  activity: `## Activity Log Tools
-
-Use to audit and track what happened across sessions.
-
-- **cortex_activity_log** \u2192 List activity log entries. Filter by entity_type, entity_id, action, since date.
-- **cortex_log_activity** \u2192 Manually log an activity entry after important operations.`
-};
-var VALID_CATEGORIES = Object.keys(TOOL_CATEGORIES);
-function getToolGuidance(categories) {
-  const results = [];
-  for (const cat of categories) {
-    if (!TOOL_CATEGORIES[cat]) {
-      throw new Error(`Unknown tool category: "${cat}". Valid: ${VALID_CATEGORIES.join(", ")}`);
-    }
-    results.push(TOOL_CATEGORIES[cat]);
-  }
-  return results.join("\n\n---\n\n");
-}
-var PRELOAD_GUIDANCE = getToolGuidance(["memory", "tracking"]);
-
-// dist/tools/meta.js
-function registerMetaTools(server2) {
-  server2.tool("cortex_load_tools", "Get detailed usage guidance for one or more Cortex tool categories. Call this before using tools in an unfamiliar category.", {
-    categories: external_exports3.array(external_exports3.string().describe(`Category name. Valid values: ${VALID_CATEGORIES.join(", ")}`)).describe('List of categories to load guidance for. Example: ["memory", "decisions"]')
-  }, async ({ categories }) => {
-    getDb();
-    try {
-      const guidance = getToolGuidance(categories);
-      return { content: [{ type: "text", text: guidance }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: err.message }] };
-    }
-  });
-}
-
-// dist/modules/activity.js
-init_db();
-function logActivity(entry) {
-  const db2 = getDb();
-  const r = db2.prepare(`
-    INSERT INTO activity_log (tool_name, entity_type, entity_id, action, old_value, new_value, session_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(entry.tool_name, entry.entity_type ?? null, entry.entity_id ?? null, entry.action, entry.old_value ?? null, entry.new_value ?? null, entry.session_id ?? null);
-  return { id: r.lastInsertRowid };
-}
-function listActivity(filter = {}) {
-  const db2 = getDb();
-  const conditions = [];
-  const params = [];
-  if (filter.entity_type) {
-    conditions.push("entity_type=?");
-    params.push(filter.entity_type);
-  }
-  if (filter.entity_id != null) {
-    conditions.push("entity_id=?");
-    params.push(filter.entity_id);
-  }
-  if (filter.action) {
-    conditions.push("action=?");
-    params.push(filter.action);
-  }
-  if (filter.since) {
-    conditions.push("created_at >= ?");
-    params.push(filter.since);
-  }
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const lim = filter.limit ?? 50;
-  params.push(lim);
-  return db2.prepare(`SELECT * FROM activity_log ${where} ORDER BY created_at DESC LIMIT ?`).all(...params);
-}
-
-// dist/tools/activity.js
-var ENTITY_TYPE_ENUM = external_exports3.enum(["decision", "error", "learning", "note", "unfinished", "session"]);
-var ACTION_ENUM = external_exports3.enum(["create", "update", "delete", "archive"]);
-function registerActivityTools(server2) {
-  server2.tool("cortex_activity_log", "Get activity log \u2014 structured audit trail of all important operations", {
-    entity_type: ENTITY_TYPE_ENUM.optional().describe('Filter by entity type. Example: "decision"'),
-    entity_id: external_exports3.number().optional().describe("Filter by entity ID. Example: 42"),
-    action: ACTION_ENUM.optional().describe("Filter by action type"),
-    since: external_exports3.string().optional().describe('ISO date or datetime to filter from. Example: "2026-02-01"'),
-    limit: external_exports3.number().optional().default(50).describe("Maximum number of results to return. Default: 50")
-  }, async (input) => {
-    const entries = listActivity(input);
-    if (entries.length === 0)
-      return { content: [{ type: "text", text: "No activity found." }] };
-    return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
-  });
-  server2.tool("cortex_log_activity", "Manually log an activity entry \u2014 call after important operations", {
-    tool_name: external_exports3.string().describe('Tool or operation name. Example: "cortex_add_decision" or "manual-refactor"'),
-    entity_type: ENTITY_TYPE_ENUM.optional().describe('Type of the affected entity. Example: "decision"'),
-    entity_id: external_exports3.number().optional().describe("ID of the affected entity"),
-    action: ACTION_ENUM.describe("Type of action performed"),
-    old_value: external_exports3.string().optional().describe("Previous value as JSON string"),
-    new_value: external_exports3.string().optional().describe("New value as JSON string"),
-    session_id: external_exports3.string().optional().describe("Current session ID for traceability")
-  }, async (input) => {
-    const result = logActivity(input);
-    return { content: [{ type: "text", text: `Activity logged (id: ${result.id})` }] };
-  });
-}
-
 // dist/index.js
-var CORTEX_INSTRUCTIONS = `Cortex is a persistent memory and intelligence system for Claude Code.
+var CORTEX_INSTRUCTIONS = `Cortex - persistent memory via MCP for coding agents.
 
-TOOL CATEGORIES (call cortex_load_tools to get detailed guidance):
-- memory: snapshot, get_context, list_sessions, search
-- decisions: add_decision, list_decisions, mark_decision_reviewed
-- errors: add_error, add_learning, check_regression, list_errors, list_learnings
-- map: scan_project, get_map, get_deps, get_hot_zones, file_history, blame
-- tracking: add_unfinished, get_unfinished, resolve_unfinished, add_intent, snooze
-- notes: add_note, list_notes, onboard, update_profile, get_profile
-- intelligence: dejavu, check_blind_spots, get_mood, forget, cross_project_search
-- stats: get_health, get_stats, get_access_stats, run_pruning, get_timeline
-- activity: activity_log, log_activity
+TOOLS:
+- cortex_store(type, ...fields)   \xE2\u20AC\u201D save decision/error/learning/todo/intent/note
+- cortex_search(query)            \xE2\u20AC\u201D search all memory (FTS5)
+- cortex_context(files?)          \xE2\u20AC\u201D session context + file-specific info
+- cortex_list(type, filter?)      \xE2\u20AC\u201D list decisions/errors/learnings/todos/notes
+- cortex_resolve(type, id)        \xE2\u20AC\u201D close todo / mark decision reviewed / update error
+- cortex_snooze(description, until) \xE2\u20AC\u201D set future reminder
+- cortex_reindex_embeddings(...)  \xE2\u20AC\u201D build semantic vector index for existing memory
 
-RULES: Always call cortex_check_regression before writing/editing files.
-Use cortex_load_tools(['category']) to get detailed usage guidance for any category.`;
-var server = new McpServer({ name: "project-cortex", version: "0.1.0" }, { instructions: CORTEX_INSTRUCTIONS });
-registerSessionTools(server);
-registerDecisionTools(server);
-registerErrorTools(server);
-registerLearningTools(server);
+WHEN TO USE:
+- Architecture decision made \xE2\u2020\u2019 cortex_store(type:"decision", ...)
+- Bug fixed \xE2\u2020\u2019 cortex_store(type:"error", ...) with prevention_rule
+- Anti-pattern found \xE2\u2020\u2019 cortex_store(type:"learning", ...) with auto_block:true
+- Something to do later \xE2\u2020\u2019 cortex_store(type:"todo", ...)
+- Need context \xE2\u2020\u2019 cortex_context() or cortex_search(query)
+- Want semantic search on old data \xE2\u2020\u2019 cortex_reindex_embeddings() once`;
+var server = new McpServer({ name: "project-cortex", version: "0.7.0" }, { instructions: CORTEX_INSTRUCTIONS });
+registerCoreTools(server);
 registerProjectMapTools(server);
-registerTrackingTools(server);
-registerIntelligenceTools(server);
-registerStatsTools(server);
-registerProfileTools(server);
-registerMetaTools(server);
-registerActivityTools(server);
 async function main() {
   getDb();
   const transport = new StdioServerTransport();

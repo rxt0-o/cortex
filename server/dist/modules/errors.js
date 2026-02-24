@@ -98,28 +98,19 @@ export function searchErrors(query, limit = 10) {
 }
 export function getErrorsForFiles(filePaths) {
     const db = getDb();
-    const results = [];
-    for (const filePath of filePaths) {
-        const rows = db.prepare(`
-      SELECT * FROM errors
-      WHERE files_involved LIKE ?
-      ORDER BY occurrences DESC
-    `).all(`%${filePath}%`);
-        for (const row of rows) {
-            results.push({
-                ...row,
-                files_involved: parseJson(row.files_involved),
-            });
-        }
-    }
-    // Dedupe by id
-    const seen = new Set();
-    return results.filter((e) => {
-        if (seen.has(e.id))
-            return false;
-        seen.add(e.id);
-        return true;
-    });
+    if (filePaths.length === 0)
+        return [];
+    const where = filePaths.map(() => 'files_involved LIKE ?').join(' OR ');
+    const params = filePaths.map((fp) => `%${fp}%`);
+    const rows = db.prepare(`
+    SELECT * FROM errors
+    WHERE ${where}
+    ORDER BY occurrences DESC
+  `).all(...params);
+    return rows.map((row) => ({
+        ...row,
+        files_involved: parseJson(row.files_involved),
+    }));
 }
 export function updateError(input) {
     const db = getDb();

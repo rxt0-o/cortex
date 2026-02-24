@@ -6,7 +6,7 @@ import { existsSync } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
-import { DatabaseSync } from 'node:sqlite';
+import { openDb } from './ensure-db.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,7 +14,7 @@ export async function runAutoRegex(cwd) {
   const dbPath = join(cwd, '.claude', 'cortex.db');
   if (!existsSync(dbPath)) return;
 
-  const db = new DatabaseSync(dbPath);
+  const db = openDb(cwd);
   try {
     // Max 1x täglich: letzten Lauf prüfen
     let lastRun = null;

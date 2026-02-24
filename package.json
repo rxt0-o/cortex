@@ -3,5 +3,12 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Hook scripts for Project Cortex"
+  "description": "Hook scripts for Project Cortex",
+  "scripts": {
+    "mcp:install": "node scripts/install-mcp.js",
+    "mcp:install:global": "node scripts/install-mcp.js --global",
+    "mcp:uninstall:global": "node scripts/install-mcp.js --global --uninstall",
+    "mcp:build": "npm --prefix server run build",
+    "mcp:start": "node server/dist/bundle.js"
+  }
 }

@@ -173,30 +173,20 @@ export function searchErrors(query: string, limit = 10): CortexError[] {
 
 export function getErrorsForFiles(filePaths: string[]): CortexError[] {
   const db = getDb();
-  const results: CortexError[] = [];
+  if (filePaths.length === 0) return [];
 
-  for (const filePath of filePaths) {
-    const rows = db.prepare(`
-      SELECT * FROM errors
-      WHERE files_involved LIKE ?
-      ORDER BY occurrences DESC
-    `).all(`%${filePath}%`) as Record<string, unknown>[];
+  const where = filePaths.map(() => 'files_involved LIKE ?').join(' OR ');
+  const params = filePaths.map((fp) => `%${fp}%`);
+  const rows = db.prepare(`
+    SELECT * FROM errors
+    WHERE ${where}
+    ORDER BY occurrences DESC
+  `).all(...params) as Record<string, unknown>[];
 
-    for (const row of rows) {
-      results.push({
-        ...row,
-        files_involved: parseJson<string[]>(row.files_involved as string),
-      } as CortexError);
-    }
-  }
-
-  // Dedupe by id
-  const seen = new Set<number>();
-  return results.filter((e) => {
-    if (seen.has(e.id)) return false;
-    seen.add(e.id);
-    return true;
-  });
+  return rows.map((row) => ({
+    ...row,
+    files_involved: parseJson<string[]>(row.files_involved as string),
+  })) as CortexError[];
 }
 
 export interface UpdateErrorInput {

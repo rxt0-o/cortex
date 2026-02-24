@@ -1,8 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
+import { FTS_TABLES, FTS_TRIGGER_DROPS, FTS_TRIGGERS } from './shared/fts-schema.js';
 let db = null;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 9;
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -13,7 +14,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   key_changes TEXT,
   chain_id TEXT,
   chain_label TEXT,
-  status TEXT DEFAULT 'active'
+  status TEXT DEFAULT 'active',
+  tags TEXT,
+  sentiment TEXT,
+  emotional_tone TEXT,
+  mood_score INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -29,7 +34,14 @@ CREATE TABLE IF NOT EXISTS decisions (
   confidence TEXT DEFAULT 'high',
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  stale INTEGER DEFAULT 0,
+  reviewed_at TEXT,
+  counter_arguments TEXT,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS errors (
@@ -48,7 +60,11 @@ CREATE TABLE IF NOT EXISTS errors (
   severity TEXT DEFAULT 'medium',
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS learnings (
@@ -64,7 +80,21 @@ CREATE TABLE IF NOT EXISTS learnings (
   auto_block INTEGER DEFAULT 0,
   access_count INTEGER DEFAULT 0,
   last_accessed TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  archived INTEGER DEFAULT 0,
+  core_memory INTEGER DEFAULT 0,
+  example_code TEXT,
+  theoretical_hits INTEGER DEFAULT 0,
+  practical_violations INTEGER DEFAULT 0,
+  superseded_by INTEGER REFERENCES learnings(id),
+  superseded_at TEXT,
+  relevance TEXT DEFAULT 'maybe_relevant',
+  write_gate_reason TEXT,
+  confidence REAL DEFAULT 0.7,
+  shared INTEGER DEFAULT 0,
+  scope TEXT DEFAULT 'project',
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS project_modules (
@@ -89,7 +119,8 @@ CREATE TABLE IF NOT EXISTS project_files (
   change_count INTEGER DEFAULT 0,
   error_count INTEGER DEFAULT 0,
   last_changed TEXT,
-  last_changed_session TEXT
+  last_changed_session TEXT,
+  cluster_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -134,7 +165,15 @@ CREATE TABLE IF NOT EXISTS unfinished (
   context TEXT,
   priority TEXT DEFAULT 'medium',
   resolved_at TEXT,
-  resolved_session TEXT
+  resolved_session TEXT,
+  snooze_until TEXT,
+  priority_score INTEGER DEFAULT 50,
+  project TEXT,
+  blocked_by TEXT,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
 );
 
 CREATE TABLE IF NOT EXISTS health_snapshots (
@@ -145,8 +184,90 @@ CREATE TABLE IF NOT EXISTS health_snapshots (
   trend TEXT
 );
 
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  tags TEXT,
+  entity_type TEXT,
+  entity_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now')),
+  session_id TEXT,
+  project TEXT,
+  access_count INTEGER DEFAULT 0,
+  last_accessed TEXT,
+  memory_strength REAL DEFAULT 1.0,
+  importance_score REAL DEFAULT 0.5
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT DEFAULT (datetime('now')),
+  tool_name TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
+  action TEXT NOT NULL,
+  old_value TEXT,
+  new_value TEXT,
+  session_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(entity_type, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS working_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  type TEXT NOT NULL,
+  activation_level REAL DEFAULT 1.0,
+  created_at TEXT DEFAULT (datetime('now')),
+  last_accessed TEXT DEFAULT (datetime('now')),
+  access_count INTEGER DEFAULT 1,
+  metadata TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auto_extractions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  status TEXT DEFAULT 'pending',
+  source_context TEXT,
+  promoted_to_type TEXT,
+  promoted_to_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS memory_associations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_type TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  relation TEXT NOT NULL,
+  strength REAL DEFAULT 1.0,
+  last_activated TEXT DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(source_type, source_id, target_type, target_id, relation),
+  CHECK(strength >= 0.0 AND strength <= 1.0),
+  CHECK(NOT (source_type = target_type AND source_id = target_id))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -167,7 +288,205 @@ CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
 CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
 CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
+CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC);
+CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_ae_confidence ON auto_extractions(confidence);
+
+CREATE INDEX IF NOT EXISTS idx_ma_source ON memory_associations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_ma_target ON memory_associations(target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_strength ON decisions(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_decisions_importance ON decisions(importance_score);
+CREATE INDEX IF NOT EXISTS idx_errors_strength ON errors(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_errors_importance ON errors(importance_score);
+CREATE INDEX IF NOT EXISTS idx_learnings_strength ON learnings(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_learnings_importance ON learnings(importance_score);
+CREATE INDEX IF NOT EXISTS idx_notes_strength ON notes(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_notes_importance ON notes(importance_score);
+CREATE INDEX IF NOT EXISTS idx_unfinished_strength ON unfinished(memory_strength);
+CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_score);
 `;
+// FTS_TABLES und FTS_TRIGGERS werden dynamisch in initSchema() eingefügt
+const COMPAT_MIGRATIONS = [
+    // Canonical tables (safe on existing DBs)
+    `
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    tags TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    session_id TEXT,
+    project TEXT,
+    entity_type TEXT,
+    entity_id INTEGER
+  )
+  `,
+    `
+  CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (datetime('now')),
+    tool_name TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id INTEGER,
+    action TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    session_id TEXT
+  )
+  `,
+    `
+  CREATE TABLE IF NOT EXISTS embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(entity_type, entity_id)
+  )
+  `,
+    `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`,
+    // v2 server fields
+    `ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN last_accessed TEXT`,
+    `ALTER TABLE decisions ADD COLUMN archived_at TEXT`,
+    `ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN last_accessed TEXT`,
+    `ALTER TABLE learnings ADD COLUMN archived_at TEXT`,
+    `ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0`,
+    `ALTER TABLE errors ADD COLUMN last_accessed TEXT`,
+    `ALTER TABLE errors ADD COLUMN archived_at TEXT`,
+    // Hook/runtime fields that server tools reference
+    `ALTER TABLE sessions ADD COLUMN tags TEXT`,
+    `ALTER TABLE sessions ADD COLUMN sentiment TEXT`,
+    `ALTER TABLE sessions ADD COLUMN emotional_tone TEXT`,
+    `ALTER TABLE sessions ADD COLUMN mood_score INTEGER`,
+    `ALTER TABLE decisions ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN stale INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions ADD COLUMN reviewed_at TEXT`,
+    `ALTER TABLE decisions ADD COLUMN counter_arguments TEXT`,
+    `ALTER TABLE decisions ADD COLUMN scope TEXT DEFAULT 'project'`,
+    `ALTER TABLE errors ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE errors ADD COLUMN scope TEXT DEFAULT 'project'`,
+    `ALTER TABLE learnings ADD COLUMN archived INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN core_memory INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN example_code TEXT`,
+    `ALTER TABLE learnings ADD COLUMN theoretical_hits INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN practical_violations INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN superseded_by INTEGER REFERENCES learnings(id)`,
+    `ALTER TABLE learnings ADD COLUMN superseded_at TEXT`,
+    `ALTER TABLE learnings ADD COLUMN relevance TEXT DEFAULT 'maybe_relevant'`,
+    `ALTER TABLE learnings ADD COLUMN write_gate_reason TEXT`,
+    `ALTER TABLE learnings ADD COLUMN confidence REAL DEFAULT 0.7`,
+    `ALTER TABLE learnings ADD COLUMN shared INTEGER DEFAULT 0`,
+    `ALTER TABLE learnings ADD COLUMN scope TEXT DEFAULT 'project'`,
+    `ALTER TABLE unfinished ADD COLUMN snooze_until TEXT`,
+    `ALTER TABLE unfinished ADD COLUMN priority_score INTEGER DEFAULT 50`,
+    `ALTER TABLE unfinished ADD COLUMN project TEXT`,
+    `ALTER TABLE unfinished ADD COLUMN blocked_by TEXT`,
+    `ALTER TABLE project_files ADD COLUMN cluster_id INTEGER`,
+    `ALTER TABLE notes ADD COLUMN project TEXT`,
+    `ALTER TABLE notes ADD COLUMN entity_type TEXT`,
+    `ALTER TABLE notes ADD COLUMN entity_id INTEGER`,
+    // Safety indexes
+    `CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_sessions_chain_id ON sessions(chain_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category)`,
+    `CREATE INDEX IF NOT EXISTS idx_errors_signature ON errors(error_signature)`,
+    `CREATE INDEX IF NOT EXISTS idx_errors_severity ON errors(severity)`,
+    `CREATE INDEX IF NOT EXISTS idx_learnings_auto_block ON learnings(auto_block)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_files_module ON project_files(module_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_files_path ON project_files(path)`,
+    `CREATE INDEX IF NOT EXISTS idx_dependencies_source ON dependencies(source_file)`,
+    `CREATE INDEX IF NOT EXISTS idx_dependencies_target ON dependencies(target_file)`,
+    `CREATE INDEX IF NOT EXISTS idx_diffs_session ON diffs(session_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_diffs_file ON diffs(file_path)`,
+    `CREATE INDEX IF NOT EXISTS idx_unfinished_resolved ON unfinished(resolved_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id)`,
+    // Phase 4: Brain Foundation — neue Tabellen
+    `CREATE TABLE IF NOT EXISTS working_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    type TEXT NOT NULL,
+    activation_level REAL DEFAULT 1.0,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_accessed TEXT DEFAULT (datetime('now')),
+    access_count INTEGER DEFAULT 1,
+    metadata TEXT
+  )`,
+    `CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC)`,
+    `CREATE TABLE IF NOT EXISTS auto_extractions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT DEFAULT 'pending',
+    source_context TEXT,
+    promoted_to_type TEXT,
+    promoted_to_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+    `CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_ae_confidence ON auto_extractions(confidence)`,
+    // Phase 4: memory_strength + importance_score auf allen 5 Content-Tabellen
+    `ALTER TABLE decisions ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+    `ALTER TABLE decisions ADD COLUMN importance_score REAL DEFAULT 0.5`,
+    `ALTER TABLE errors ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+    `ALTER TABLE errors ADD COLUMN importance_score REAL DEFAULT 0.5`,
+    `ALTER TABLE learnings ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+    `ALTER TABLE learnings ADD COLUMN importance_score REAL DEFAULT 0.5`,
+    `ALTER TABLE notes ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+    `ALTER TABLE notes ADD COLUMN importance_score REAL DEFAULT 0.5`,
+    `ALTER TABLE unfinished ADD COLUMN memory_strength REAL DEFAULT 1.0`,
+    `ALTER TABLE unfinished ADD COLUMN importance_score REAL DEFAULT 0.5`,
+    // Phase 4: access_count + last_accessed nur auf notes + unfinished (decisions/errors/learnings haben es bereits)
+    `ALTER TABLE notes ADD COLUMN access_count INTEGER DEFAULT 0`,
+    `ALTER TABLE notes ADD COLUMN last_accessed TEXT`,
+    `ALTER TABLE unfinished ADD COLUMN access_count INTEGER DEFAULT 0`,
+    `ALTER TABLE unfinished ADD COLUMN last_accessed TEXT`,
+    // Phase 4: Neue Indizes fuer Decay + Importance-Queries
+    `CREATE INDEX IF NOT EXISTS idx_decisions_strength ON decisions(memory_strength)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_importance ON decisions(importance_score)`,
+    `CREATE INDEX IF NOT EXISTS idx_errors_strength ON errors(memory_strength)`,
+    `CREATE INDEX IF NOT EXISTS idx_errors_importance ON errors(importance_score)`,
+    `CREATE INDEX IF NOT EXISTS idx_learnings_strength ON learnings(memory_strength)`,
+    `CREATE INDEX IF NOT EXISTS idx_learnings_importance ON learnings(importance_score)`,
+    `CREATE INDEX IF NOT EXISTS idx_notes_strength ON notes(memory_strength)`,
+    `CREATE INDEX IF NOT EXISTS idx_notes_importance ON notes(importance_score)`,
+    `CREATE INDEX IF NOT EXISTS idx_unfinished_strength ON unfinished(memory_strength)`,
+    `CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_score)`,
+    // Phase 6: memory_associations Tabelle
+    `CREATE TABLE IF NOT EXISTS memory_associations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    relation TEXT NOT NULL,
+    strength REAL DEFAULT 1.0,
+    last_activated TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(source_type, source_id, target_type, target_id, relation),
+    CHECK(strength >= 0.0 AND strength <= 1.0),
+    CHECK(NOT (source_type = target_type AND source_id = target_id))
+  )`,
+    `CREATE INDEX IF NOT EXISTS idx_ma_source ON memory_associations(source_type, source_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_ma_target ON memory_associations(target_type, target_id)`,
+];
 function getDbPath(projectDir) {
     const dir = projectDir ?? process.cwd();
     const claudeDir = path.join(dir, '.claude');
@@ -190,35 +509,74 @@ export function getDb(projectDir) {
     return db;
 }
 function initSchema(database) {
-    const versionRow = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").get();
-    if (!versionRow) {
+    const hasAnyCoreTable = hasTable(database, 'sessions')
+        || hasTable(database, 'decisions')
+        || hasTable(database, 'errors')
+        || hasTable(database, 'learnings')
+        || hasTable(database, 'unfinished');
+    if (!hasAnyCoreTable) {
         database.exec(SCHEMA_SQL);
-        database.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
+        database.exec(FTS_TABLES);
+        database.exec(FTS_TRIGGER_DROPS);
+        database.exec(FTS_TRIGGERS);
+        ensureSchemaVersionRow(database);
+        database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
         return;
     }
-    const current = database.prepare('SELECT version FROM schema_version').get();
-    if (!current || current.version < SCHEMA_VERSION) {
-        // Migration v1 auf v2: Access-Counter und Archivierung
-        if (!current || current.version < 2) {
-            const migrations = [
-                'ALTER TABLE decisions ADD COLUMN access_count INTEGER DEFAULT 0',
-                'ALTER TABLE decisions ADD COLUMN last_accessed TEXT',
-                'ALTER TABLE decisions ADD COLUMN archived_at TEXT',
-                'ALTER TABLE learnings ADD COLUMN access_count INTEGER DEFAULT 0',
-                'ALTER TABLE learnings ADD COLUMN last_accessed TEXT',
-                'ALTER TABLE learnings ADD COLUMN archived_at TEXT',
-                'ALTER TABLE errors ADD COLUMN access_count INTEGER DEFAULT 0',
-                'ALTER TABLE errors ADD COLUMN last_accessed TEXT',
-                'ALTER TABLE errors ADD COLUMN archived_at TEXT',
-            ];
-            for (const sql of migrations) {
-                try {
-                    database.exec(sql);
-                }
-                catch { /* Spalte existiert bereits */ }
-            }
+    for (const sql of COMPAT_MIGRATIONS) {
+        try {
+            database.exec(sql);
         }
-        database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
+        catch {
+            // Intentionally ignored: migration is idempotent and may already be applied.
+        }
+    }
+    try {
+        database.exec(SCHEMA_SQL);
+    }
+    catch {
+        // Existing DBs may still contain legacy shape; compat migrations above are authoritative.
+    }
+    // FTS Tables — idempotent (IF NOT EXISTS)
+    try {
+        database.exec(FTS_TABLES);
+    }
+    catch { /* bereits vorhanden */ }
+    // FTS Triggers: DROP + CREATE — kaputte Trigger werden ersetzt
+    database.exec(FTS_TRIGGER_DROPS);
+    database.exec(FTS_TRIGGERS);
+    // Phase 4: Backfill — NULL-Werte auf Defaults setzen
+    const backfillSql = [
+        `UPDATE decisions SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+        `UPDATE decisions SET importance_score = 0.5 WHERE importance_score IS NULL`,
+        `UPDATE errors SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+        `UPDATE errors SET importance_score = 0.5 WHERE importance_score IS NULL`,
+        `UPDATE learnings SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+        `UPDATE learnings SET importance_score = 0.5 WHERE importance_score IS NULL`,
+        `UPDATE notes SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+        `UPDATE notes SET importance_score = 0.5 WHERE importance_score IS NULL`,
+        `UPDATE unfinished SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
+        `UPDATE unfinished SET importance_score = 0.5 WHERE importance_score IS NULL`,
+        `UPDATE notes SET access_count = 0 WHERE access_count IS NULL`,
+        `UPDATE unfinished SET access_count = 0 WHERE access_count IS NULL`,
+    ];
+    for (const sql of backfillSql) {
+        try {
+            database.exec(sql);
+        }
+        catch { /* Spalte noch nicht vorhanden auf sehr alten DBs */ }
+    }
+    ensureSchemaVersionRow(database);
+    database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
+}
+function hasTable(database, name) {
+    const row = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+    return Boolean(row);
+}
+function ensureSchemaVersionRow(database) {
+    const row = database.prepare('SELECT version FROM schema_version LIMIT 1').get();
+    if (!row) {
+        database.prepare('INSERT INTO schema_version (version) VALUES (0)').run();
     }
 }
 export function closeDb() {

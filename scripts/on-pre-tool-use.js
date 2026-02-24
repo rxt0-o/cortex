@@ -2,8 +2,8 @@
 // PreToolUse Hook — Pattern Enforcer + Regression Guard
 
 import { readFileSync, existsSync } from 'fs';
-import { DatabaseSync } from 'node:sqlite';
 import { join } from 'path';
+import { openDb } from './ensure-db.js';
 
 // Hookify-kompatible cortex-pins.local.md laden
 function loadPinRules(claudeDir) {
@@ -60,7 +60,7 @@ function main() {
   const dbPath = join(claudeDir, 'cortex.db');
   if (!existsSync(dbPath)) process.exit(0);
 
-  const db = new DatabaseSync(dbPath);
+  const db = openDb(cwd);
 
   try {
     const warnings = [];

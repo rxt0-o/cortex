@@ -79,23 +79,189 @@ export async function findSimilar(queryText, limit = 15) {
 export function buildEmbeddingText(fields) {
     const parts = [];
     for (const [, value] of Object.entries(fields)) {
-        if (value && typeof value === 'string') {
-            parts.push(value);
+        if (typeof value === 'string' && value.trim().length > 0) {
+            parts.push(value.trim());
+            continue;
+        }
+        if (Array.isArray(value)) {
+            const asText = value
+                .filter((v) => typeof v === 'string')
+                .join(' ')
+                .trim();
+            if (asText)
+                parts.push(asText);
         }
     }
     return parts.join(' ').slice(0, 512);
+}
+export function getEmbeddingCount() {
+    const db = getDb();
+    try {
+        const row = db.prepare('SELECT COUNT(*) as c FROM embeddings').get();
+        return row.c ?? 0;
+    }
+    catch {
+        return 0;
+    }
 }
 /**
  * Check if embeddings table is available and has data.
  */
 export function isAvailable() {
-    const db = getDb();
+    return getEmbeddingCount() > 0;
+}
+/**
+ * Check if text is a near-duplicate of existing memory (similarity >= threshold).
+ * Returns the most similar match if above threshold, null otherwise.
+ */
+export async function isDuplicate(text, threshold = 0.92) {
     try {
-        const row = db.prepare('SELECT COUNT(*) as c FROM embeddings').get();
-        return row.c > 0;
+        const results = await findSimilar(text, 1);
+        if (results.length > 0 && results[0].score >= threshold) {
+            return results[0];
+        }
     }
     catch {
-        return false;
+        // Embedding pipeline not available — skip dedup.
     }
+    return null;
+}
+export async function backfillEmbeddings(options) {
+    const db = getDb();
+    const limit = options?.limitPerType ?? 300;
+    const force = options?.force ?? false;
+    const includeResolvedTodos = options?.includeResolvedTodos ?? false;
+    const candidates = collectBackfillCandidates(db, limit, includeResolvedTodos);
+    const existing = force ? new Set() : getExistingKeys(db);
+    const result = {
+        scanned: candidates.length,
+        embedded: 0,
+        skipped: 0,
+        errors: 0,
+        byType: {
+            decision: 0,
+            error: 0,
+            learning: 0,
+            note: 0,
+            session: 0,
+            todo: 0,
+        },
+    };
+    for (const c of candidates) {
+        const key = `${c.entity_type}:${c.entity_id}`;
+        if (!force && existing.has(key)) {
+            result.skipped++;
+            continue;
+        }
+        try {
+            const vec = await embed(c.text);
+            storeEmbedding(c.entity_type, c.entity_id, vec);
+            result.embedded++;
+            result.byType[c.entity_type]++;
+        }
+        catch {
+            result.errors++;
+        }
+    }
+    return result;
+}
+function getExistingKeys(db) {
+    try {
+        const rows = db.prepare('SELECT entity_type, entity_id FROM embeddings').all();
+        return new Set(rows.map((r) => `${r.entity_type}:${r.entity_id}`));
+    }
+    catch {
+        return new Set();
+    }
+}
+function collectBackfillCandidates(db, limitPerType, includeResolvedTodos) {
+    const candidates = [];
+    const decisions = db.prepare(`
+    SELECT id, title, reasoning
+    FROM decisions
+    WHERE archived_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of decisions) {
+        const text = buildEmbeddingText({ title: row.title, reasoning: row.reasoning });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'decision', entity_id: String(row.id), text });
+    }
+    const errors = db.prepare(`
+    SELECT id, error_message, root_cause, fix_description
+    FROM errors
+    WHERE archived_at IS NULL
+    ORDER BY last_seen DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of errors) {
+        const text = buildEmbeddingText({
+            error_message: row.error_message,
+            root_cause: row.root_cause ?? '',
+            fix_description: row.fix_description ?? '',
+        });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'error', entity_id: String(row.id), text });
+    }
+    const learnings = db.prepare(`
+    SELECT id, anti_pattern, correct_pattern, context
+    FROM learnings
+    WHERE archived_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of learnings) {
+        const text = buildEmbeddingText({
+            anti_pattern: row.anti_pattern,
+            correct_pattern: row.correct_pattern,
+            context: row.context,
+        });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'learning', entity_id: String(row.id), text });
+    }
+    const notes = db.prepare(`
+    SELECT id, text
+    FROM notes
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of notes) {
+        const text = buildEmbeddingText({ text: row.text });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'note', entity_id: String(row.id), text });
+    }
+    const sessions = db.prepare(`
+    SELECT id, summary, key_changes
+    FROM sessions
+    WHERE summary IS NOT NULL
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of sessions) {
+        const text = buildEmbeddingText({
+            summary: row.summary ?? '',
+            key_changes: row.key_changes ?? '',
+        });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'session', entity_id: row.id, text });
+    }
+    const todoWhere = includeResolvedTodos ? '' : 'WHERE resolved_at IS NULL';
+    const todos = db.prepare(`
+    SELECT id, description, context
+    FROM unfinished
+    ${todoWhere}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limitPerType);
+    for (const row of todos) {
+        const text = buildEmbeddingText({
+            description: row.description,
+            context: row.context ?? '',
+        });
+        if (text.length >= 10)
+            candidates.push({ entity_type: 'todo', entity_id: String(row.id), text });
+    }
+    return candidates;
 }
 //# sourceMappingURL=embeddings.js.map

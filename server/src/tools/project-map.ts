@@ -197,10 +197,10 @@ export function registerProjectMapTools(server: McpServer): void {
       const db = getDb();
       const fileCounts = new Map<string, number>();
       for (const line of gitOutput.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(trimmed)) continue;
-        fileCounts.set(trimmed, (fileCounts.get(trimmed) ?? 0) + 1);
+        const normalized = line.trim().replace(/\\/g, '/');
+        if (!normalized) continue;
+        if (!/\.(ts|tsx|js|jsx|py|sql|json|md)$/.test(normalized)) continue;
+        fileCounts.set(normalized, (fileCounts.get(normalized) ?? 0) + 1);
       }
   
       const stmt = db.prepare(`

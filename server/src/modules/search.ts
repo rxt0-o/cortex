@@ -128,6 +128,11 @@ export function searchBm25(query: string, limit = 15): SearchResult[] {
 }
 
 const RRF_K = 60;
+const EMBEDDING_ONLY_THRESHOLD = (() => {
+  const parsed = Number.parseFloat(process.env.CORTEX_EMBEDDING_THRESHOLD ?? '0.28');
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  return 0.28;
+})();
 
 /**
  * Unified search: BM25 + Embedding similarity via RRF-Fusion.
@@ -172,7 +177,7 @@ export async function searchAll(query: string, limit = 15): Promise<SearchResult
     if (existing) {
       // Both BM25 + embedding matched — add scores
       existing.score += rrfScore;
-    } else if (e.score > 0.4) {
+    } else if (e.score >= EMBEDDING_ONLY_THRESHOLD) {
       // Embedding-only result with decent similarity — resolve from DB
       const resolved = resolveEntity(e.entity_type, e.entity_id, query);
       if (resolved) {
@@ -199,9 +204,13 @@ function resolveEntity(entityType: string, entityId: string, query: string): Sea
   if (!cfg) return null;
 
   try {
+    const idColumn = entityType === 'session'
+      ? 'id'
+      : (cfg.joinColumn === 'rowid' ? 'rowid' : 'id');
+    const idValue = entityType === 'session' ? entityId : Number(entityId);
     const row = db.prepare(
-      `SELECT * FROM ${cfg.sourceTable} WHERE ${cfg.joinColumn === 'rowid' ? 'rowid' : 'id'} = ?`
-    ).get(entityType === 'session' ? entityId : Number(entityId)) as any;
+      `SELECT * FROM ${cfg.sourceTable} WHERE ${idColumn} = ?`
+    ).get(idValue) as any;
     if (!row) return null;
 
     return {

@@ -1,275 +1,330 @@
 #!/usr/bin/env node
-// Stop Hook — Summarize session and save to DB + notify daemon
+// Stop hook: summarize session and persist state.
 
-import { readFileSync, existsSync, createReadStream, appendFileSync } from 'fs';
+import { readFileSync, existsSync, createReadStream } from 'fs';
 import { createInterface } from 'readline';
-import { join } from 'path';
 import { openDb } from './ensure-db.js';
 
 async function main() {
   const input = JSON.parse(readFileSync(0, 'utf-8'));
   const { session_id, transcript_path, cwd, stop_hook_active } = input;
-  if (stop_hook_active) { process.exit(0); }
+  if (stop_hook_active) process.exit(0);
 
   const db = openDb(cwd);
 
   try {
     const toolCalls = [];
     const filesModified = new Set();
-
     const userMessages = [];
+
     if (transcript_path && existsSync(transcript_path)) {
-      const rl = createInterface({ input: createReadStream(transcript_path, { encoding: 'utf-8' }), crlfDelay: Infinity });
+      const rl = createInterface({
+        input: createReadStream(transcript_path, { encoding: 'utf-8' }),
+        crlfDelay: Infinity,
+      });
+
       for await (const line of rl) {
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line);
           if (entry.type === 'assistant' && Array.isArray(entry.content)) {
             for (const block of entry.content) {
-              if (block.type === 'tool_use') {
-                toolCalls.push(block.name);
-                if (['Write', 'Edit'].includes(block.name) && block.input?.file_path) filesModified.add(block.input.file_path);
+              if (block.type !== 'tool_use') continue;
+              toolCalls.push(block.name);
+              if (['Write', 'Edit'].includes(block.name) && block.input?.file_path) {
+                filesModified.add(block.input.file_path);
               }
             }
           }
-          // User-Messages extrahieren für semantische Summary
+
           if (entry.type === 'human' && Array.isArray(entry.content)) {
             for (const block of entry.content) {
-              if (block.type === 'text' && block.text && block.text.length > 20) {
-                // Hook-injizierte Nachrichten filtern
-                if (!block.text.startsWith('-- Project Cortex') &&
-                    !block.text.startsWith('Cortex') &&
-                    !block.text.includes('hookSpecificOutput') &&
-                    !block.text.includes('SessionStart hook')) {
-                  userMessages.push(block.text.slice(0, 200));
-                }
+              if (block.type !== 'text' || !block.text || block.text.length <= 20) continue;
+              if (
+                !block.text.startsWith('-- Project Cortex') &&
+                !block.text.startsWith('Cortex') &&
+                !block.text.includes('hookSpecificOutput') &&
+                !block.text.includes('SessionStart hook')
+              ) {
+                userMessages.push(block.text.slice(0, 200));
               }
             }
           }
-        } catch { /* skip */ }
+        } catch {
+          // Ignore malformed transcript entries.
+        }
       }
     }
 
     const fileList = [...filesModified];
-    const toolCounts = {};
-    for (const t of toolCalls) toolCounts[t] = (toolCounts[t] || 0) + 1;
-
-    const parts = [];
-    if (fileList.length > 0) parts.push(`Files: ${fileList.slice(0, 10).join(', ')}${fileList.length > 10 ? ` (+${fileList.length - 10})` : ''}`);
-    const actions = Object.entries(toolCounts).sort(([, a], [, b]) => b - a).map(([t, c]) => `${t}:${c}`).join(', ');
-    if (actions) parts.push(`Actions: ${actions}`);
-    if (userMessages.length > 0) parts.push(`Topics: ${userMessages.slice(0, 3).map(m => m.slice(0, 60)).join('; ')}`);
-    let summary = parts.join(' | ') || 'No significant activity';
-    let sessionTags = [];
-
-    // Haiku-Agent für semantische Summary
-    // Trigger: Dateien geändert, >2 Tool-Calls, MCP-Calls, oder >1 User-Messages
-    const hasMcpCalls = toolCalls.some(t => t.startsWith('mcp__'));
-    if (fileList.length > 0 || toolCalls.length > 2 || hasMcpCalls || userMessages.length > 1) {
-      const aiResult = await buildTranscriptSummary(transcript_path, fileList, toolCounts);
-      if (aiResult?.summary) {
-        summary = aiResult.summary;
-        sessionTags = aiResult.tags;
-      }
-    }
-    const keyChanges = JSON.stringify(fileList.slice(0, 20).map(f => ({ file: f, action: 'modified', description: '' })));
     const ts = new Date().toISOString();
+    let summary = '';
+
+    if (userMessages.length > 0) {
+      summary = userMessages.slice(0, 3).map((m) => m.slice(0, 80)).join(' / ');
+    } else {
+      const touched = fileList.length > 0 ? ` | files: ${fileList.slice(0, 4).join(', ')}` : '';
+      summary = `[Auto] ${toolCalls.length} tool calls, ${fileList.length} file changes${touched}`;
+    }
+
+    const keyChanges = JSON.stringify(
+      fileList.slice(0, 20).map((file) => ({ file, action: 'modified', description: '' }))
+    );
 
     const session = db.prepare('SELECT started_at FROM sessions WHERE id = ?').get(session_id);
     const startedAt = session?.started_at || ts;
-    const dur = Math.round((Date.now() - new Date(startedAt).getTime()) / 1000);
+    const durationSeconds = Math.round((Date.now() - new Date(startedAt).getTime()) / 1000);
 
-    db.prepare(`INSERT INTO sessions (id, started_at, ended_at, duration_seconds, summary, key_changes, status, tags)
-      VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
-      ON CONFLICT(id) DO UPDATE SET ended_at=excluded.ended_at, duration_seconds=excluded.duration_seconds,
-        summary=excluded.summary, key_changes=excluded.key_changes, status='completed', tags=excluded.tags`
-    ).run(session_id, startedAt, ts, dur, summary, keyChanges, JSON.stringify(sessionTags));
+    db.prepare(`
+      INSERT INTO sessions (id, started_at, ended_at, duration_seconds, summary, key_changes, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed')
+      ON CONFLICT(id) DO UPDATE SET
+        ended_at = excluded.ended_at,
+        duration_seconds = excluded.duration_seconds,
+        summary = excluded.summary,
+        key_changes = excluded.key_changes,
+        status = 'completed'
+    `).run(session_id, startedAt, ts, durationSeconds, summary, keyChanges);
 
-    // Track files
-    const fStmt = db.prepare(`INSERT INTO project_files (path, change_count, last_changed, last_changed_session) VALUES (?, 1, ?, ?)
-      ON CONFLICT(path) DO UPDATE SET change_count = project_files.change_count + 1, last_changed = ?, last_changed_session = ?`);
-    for (const f of fileList) fStmt.run(f, ts, session_id, ts, session_id);
+    const fileStmt = db.prepare(`
+      INSERT INTO project_files (path, change_count, last_changed, last_changed_session)
+      VALUES (?, 1, ?, ?)
+      ON CONFLICT(path) DO UPDATE SET
+        change_count = project_files.change_count + 1,
+        last_changed = ?,
+        last_changed_session = ?
+    `);
+    for (const file of fileList) {
+      fileStmt.run(file, ts, session_id, ts, session_id);
+    }
 
-    // session_end Event fuer Daemon queuen (Learner-Agent)
     try {
-      const queuePath = join(cwd, '.claude', 'cortex-events.jsonl');
-      const event = {
-        type: 'session_end',
-        session_id,
-        transcript_path: transcript_path || null,
-        ts: ts,
-      };
-      appendFileSync(queuePath, JSON.stringify(event) + '\n', 'utf-8');
-    } catch { /* nicht kritisch */ }
+      db.prepare(`
+        UPDATE decisions
+        SET stale = 1
+        WHERE stale != 1
+          AND created_at < datetime('now','-90 days')
+          AND (reviewed_at IS NULL OR reviewed_at < datetime('now','-90 days'))
+      `).run();
+    } catch {
+      // Non-critical.
+    }
 
-    // Mark stale decisions (>90 days without review)
-    try { db.prepare(`UPDATE decisions SET stale=1 WHERE stale!=1 AND created_at < datetime('now','-90 days') AND (reviewed_at IS NULL OR reviewed_at < datetime('now','-90 days'))`).run(); } catch {}
-
-    // Health snapshot
     try {
       const last = db.prepare('SELECT date FROM health_snapshots ORDER BY date DESC LIMIT 1').get();
       if (!last || (Date.now() - new Date(last.date).getTime()) > 6 * 3600 * 1000) {
-        const oe = db.prepare('SELECT COUNT(*) as c FROM errors WHERE fix_description IS NULL').get().c;
-        const ou = db.prepare('SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL').get().c;
-        let score = Math.max(0, Math.min(100, 100 - oe * 5 - ou * 2));
+        const openErrors = db.prepare('SELECT COUNT(*) as c FROM errors WHERE fix_description IS NULL').get().c;
+        const openUnfinished = db.prepare('SELECT COUNT(*) as c FROM unfinished WHERE resolved_at IS NULL').get().c;
+        const score = Math.max(0, Math.min(100, 100 - openErrors * 5 - openUnfinished * 2));
         const today = ts.split('T')[0];
         const prev = db.prepare('SELECT score FROM health_snapshots ORDER BY date DESC LIMIT 1').get();
         const trend = !prev ? 'stable' : score > prev.score + 2 ? 'up' : score < prev.score - 2 ? 'down' : 'stable';
-        db.prepare(`INSERT INTO health_snapshots (date, score, metrics, trend) VALUES (?, ?, ?, ?)
-          ON CONFLICT(date) DO UPDATE SET score=excluded.score, metrics=excluded.metrics, trend=excluded.trend`
-        ).run(today, score, JSON.stringify({ openErrors: oe, openUnfinished: ou }), trend);
+        db.prepare(`
+          INSERT INTO health_snapshots (date, score, metrics, trend)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(date) DO UPDATE SET
+            score = excluded.score,
+            metrics = excluded.metrics,
+            trend = excluded.trend
+        `).run(today, score, JSON.stringify({ openErrors, openUnfinished }), trend);
       }
-    } catch { /* non-critical */ }
+    } catch {
+      // Non-critical.
+    }
 
-    // Memory Consolidation: archive unused learnings, promote core memories
     try {
-      db.prepare(`UPDATE learnings SET archived=1, archived_at=datetime('now') WHERE auto_block=1 AND theoretical_hits=0 AND created_at < datetime('now','-30 days') AND core_memory!=1 AND archived_at IS NULL`).run();
-      db.prepare(`UPDATE learnings SET core_memory=1 WHERE theoretical_hits>=10`).run();
-    } catch {}
+      db.prepare(`
+        UPDATE learnings
+        SET archived = 1, archived_at = datetime('now')
+        WHERE auto_block = 1
+          AND theoretical_hits = 0
+          AND created_at < datetime('now','-30 days')
+          AND core_memory != 1
+          AND archived_at IS NULL
+      `).run();
+      db.prepare('UPDATE learnings SET core_memory = 1 WHERE theoretical_hits >= 10').run();
+    } catch {
+      // Non-critical.
+    }
 
-    // Confidence Decay: -0.01 pro Session für auto_block Learnings (nicht core_memory)
     try {
-      db.prepare(`UPDATE learnings SET confidence = MAX(0.3, confidence - 0.01) WHERE auto_block = 1 AND core_memory != 1 AND archived_at IS NULL`).run();
-    } catch {}
+      db.prepare(`
+        UPDATE learnings
+        SET confidence = MAX(0.3, confidence - 0.01)
+        WHERE auto_block = 1
+          AND core_memory != 1
+          AND archived_at IS NULL
+      `).run();
+    } catch {
+      // Non-critical.
+    }
 
-    // Priority scoring: bump high-priority items that are overdue
     try {
-      db.prepare(`UPDATE unfinished SET priority_score = COALESCE(priority_score, 50) + 5 WHERE resolved_at IS NULL AND created_at < datetime('now','-3 days') AND priority='high'`).run();
-      db.prepare(`UPDATE unfinished SET priority_score = COALESCE(priority_score, 50) + 2 WHERE resolved_at IS NULL AND created_at < datetime('now','-7 days') AND priority='medium'`).run();
-    } catch {}
+      db.prepare(`
+        UPDATE unfinished
+        SET priority_score = COALESCE(priority_score, 50) + 5
+        WHERE resolved_at IS NULL
+          AND created_at < datetime('now','-3 days')
+          AND priority = 'high'
+      `).run();
+      db.prepare(`
+        UPDATE unfinished
+        SET priority_score = COALESCE(priority_score, 50) + 2
+        WHERE resolved_at IS NULL
+          AND created_at < datetime('now','-7 days')
+          AND priority = 'medium'
+      `).run();
+    } catch {
+      // Non-critical.
+    }
 
-    // Auto-Regex Generator (async, non-blocking, max 1x täglich)
     try {
       const { runAutoRegex } = await import('./auto-regex.js');
       await runAutoRegex(cwd);
-    } catch { /* non-critical */ }
+    } catch {
+      // Non-critical.
+    }
 
-    // OTEL-Metriken speichern (graceful — kein Fehler wenn OTEL nicht aktiv)
+    // Phase 5: Auto-Extraction from transcript
     try {
-      const otelMetrics = await readOtelMetrics(session_id);
-      if (otelMetrics) {
-        db.prepare(`
-          INSERT INTO session_metrics
-            (session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          session_id,
-          otelMetrics.inputTokens,
-          otelMetrics.outputTokens,
-          otelMetrics.cacheReadTokens,
-          otelMetrics.cacheWriteTokens,
-          otelMetrics.costUsd,
-          otelMetrics.durationMs,
-          new Date().toISOString()
-        );
-      }
-    } catch { /* non-critical */ }
+      extractFromTranscript(db, session_id, transcript_path);
+    } catch {
+      // Non-critical — extraction failure must not block session end.
+    }
   } finally {
     db.close();
   }
 }
 
-// Ruft claude CLI auf um eine semantische Summary zu erzeugen
-// Gibt null zurück wenn claude nicht verfügbar oder Timeout
-async function buildTranscriptSummary(transcriptPath, fileList, toolCounts) {
+// Phase 5: Auto-Extraction patterns and logic
+
+const EXTRACTION_PATTERNS = [
+  { type: 'error',      regex: /\b(?:error|bug|broke|crash|failed)\b/i,                          base_confidence: 0.6 },
+  { type: 'decision',   regex: /\b(?:we decided|going with|let's use|chose to|decision:)\b/i,    base_confidence: 0.5 },
+  { type: 'learning',   regex: /\b(?:learned that|TIL|turns out|gotcha|important:)\b/i,           base_confidence: 0.5 },
+  { type: 'convention', regex: /\b(?:convention:|always use|never use|must always|rule:)\b/i,      base_confidence: 0.4 },
+];
+
+const SKIP_PATTERNS = [
+  /^(?:fix|feat|chore|docs|refactor|test)\(.+\):/i,
+  /^\s*\d+ errors?.*\d+ warnings?/i,
+  /eslint|prettier|tsc/i,
+];
+
+function extractFromTranscript(db, sessionId, transcriptPath) {
+  if (!transcriptPath || !existsSync(transcriptPath)) return;
+
+  // Read transcript synchronously for simplicity (already parsed above in async context,
+  // but we need the assistant text blocks here)
+  const content = readFileSync(transcriptPath, 'utf-8');
+  const lines = content.split('\n').filter(Boolean);
+
+  const chunks = [];
+  // Track retry-detector data from edit_tracker
+  let retryFiles = [];
   try {
-    const { execFile } = await import('child_process');
-    const { promisify } = await import('util');
-    const execFileAsync = promisify(execFile);
+    retryFiles = db.prepare(
+      `SELECT tracker_key, count FROM edit_tracker WHERE count >= 3`
+    ).all().map(r => r.tracker_key);
+  } catch { /* edit_tracker may not exist */ }
 
-    const filesStr = fileList.slice(0, 8).join(', ');
-    const toolStr = Object.entries(toolCounts)
-      .sort(([,a],[,b]) => b-a).slice(0, 5)
-      .map(([t,c]) => `${t}:${c}`).join(', ');
-
-    let userMessages = '';
+  for (const line of lines) {
     try {
-      const { readFileSync } = await import('fs');
-      const lines = readFileSync(transcriptPath, 'utf-8').split('\n').filter(Boolean);
-      const msgs = [];
-      for (const line of lines) {
-        if (msgs.length >= 5) break;
-        try {
-          const e = JSON.parse(line);
-          const isUser = e.role === 'user' || e.type === 'human';
-          if (isUser && typeof e.content === 'string' && e.content.length > 10) {
-            msgs.push(e.content.slice(0, 120));
-          } else if (isUser && Array.isArray(e.content)) {
-            const text = e.content.find(b => b.type === 'text')?.text;
-            if (text && text.length > 10 &&
-                !text.startsWith('-- Project Cortex') &&
-                !text.startsWith('Cortex') &&
-                !text.includes('hookSpecificOutput')) {
-              msgs.push(text.slice(0, 120));
+      const entry = JSON.parse(line);
+      if (entry.type === 'assistant' && Array.isArray(entry.content)) {
+        for (const block of entry.content) {
+          if (block.type === 'text' && block.text) {
+            // Split into paragraphs/chunks
+            const paragraphs = block.text.split(/\n{2,}/).filter(p => p.trim().length >= 50);
+            for (const p of paragraphs) {
+              chunks.push(p.trim().slice(0, 500));
             }
           }
-        } catch { /* skip */ }
+        }
       }
-      userMessages = msgs.join(' | ');
-    } catch { /* optional */ }
+    } catch {
+      // Malformed line.
+    }
+  }
 
-    const prompt = `Summarize this coding session in 1-2 sentences (English, concise, focus on WHAT was done and WHY):
-Files changed: ${filesStr || 'none'}
-Tools used: ${toolStr || 'none'}
-User requests: ${userMessages || 'unknown'}
+  if (chunks.length === 0) return;
 
-Reply with ONLY:
-SUMMARY: <1-2 sentence summary>
-TAGS: <comma-separated tags from: bugfix,feature,refactor,security,database,frontend,backend,docs,config>`;
+  const insertStmt = db.prepare(`
+    INSERT INTO auto_extractions (session_id, type, content, confidence, status, source_context, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
 
-    // Windows: claude ist ein .cmd-Wrapper → shell: true nötig
-    const claudePath = process.platform === 'win32' ? 'claude.cmd' : 'claude';
-    const result = await execFileAsync(claudePath, [
-      '--model', 'claude-haiku-4-5-20251001',
-      '--max-tokens', '150',
-      '-p', prompt,
-    ], { timeout: 20000, encoding: 'utf-8', shell: process.platform === 'win32' });
+  let extracted = 0;
+  const MAX_EXTRACTIONS = 20;
 
-    const output = result.stdout.trim();
-    const summaryMatch = output.match(/SUMMARY:\s*(.+)/);
-    const tagsMatch = output.match(/TAGS:\s*(.+)/);
+  for (const chunk of chunks) {
+    if (extracted >= MAX_EXTRACTIONS) break;
 
-    return {
-      summary: summaryMatch?.[1]?.trim() ?? null,
-      tags: tagsMatch?.[1]?.split(',').map(t => t.trim()).filter(Boolean) ?? [],
-    };
-  } catch {
-    return null;
+    // Skip patterns
+    if (SKIP_PATTERNS.some(re => re.test(chunk))) continue;
+
+    for (const pattern of EXTRACTION_PATTERNS) {
+      if (!pattern.regex.test(chunk)) continue;
+
+      let confidence = pattern.base_confidence;
+
+      // Confidence modifiers
+      if (/```/.test(chunk)) confidence += 0.2;  // Code block
+      if (/[\w-]+\.\w{1,4}/.test(chunk)) confidence += 0.1;  // Filename
+      if (retryFiles.some(f => chunk.includes(f.split(':')[0]))) confidence += 0.15;  // Retry-detector
+      if (chunk.length < 50) confidence -= 0.1;  // Short
+
+      confidence = Math.round(Math.min(1.0, Math.max(0, confidence)) * 100) / 100;
+
+      // Threshold: drop below 0.4
+      if (confidence < 0.4) continue;
+
+      const status = confidence >= 0.7 ? 'promoted' : 'pending';
+      const sourceContext = chunk.slice(0, 200);
+
+      try {
+        insertStmt.run(sessionId, pattern.type, chunk.slice(0, 300), confidence, status, sourceContext);
+        extracted++;
+
+        // Auto-promote high-confidence items
+        if (status === 'promoted') {
+          autoPromote(db, sessionId, pattern.type, chunk.slice(0, 300));
+        }
+      } catch {
+        // Duplicate or constraint error — skip.
+      }
+
+      break; // One pattern match per chunk
+    }
   }
 }
 
-async function readOtelMetrics(sessionId) {
+function autoPromote(db, sessionId, type, content) {
+  const ts = new Date().toISOString();
   try {
-    const otelPath = process.env.OTEL_LOG_FILE
-      || join(process.env.HOME || process.env.USERPROFILE || '', '.claude', 'otel-spans.jsonl');
-
-    if (!existsSync(otelPath)) return null;
-
-    let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
-    let costUsd = 0, durationMs = 0;
-    let found = false;
-
-    const rl = createInterface({ input: createReadStream(otelPath, { encoding: 'utf-8' }), crlfDelay: Infinity });
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      try {
-        const span = JSON.parse(line);
-        const attrs = span.attributes || span.resource?.attributes || {};
-        const spanSession = attrs['session.id'] || attrs['claude.session_id'] || span.session_id;
-        if (spanSession !== sessionId) continue;
-        found = true;
-        inputTokens      += Number(attrs['llm.usage.prompt_tokens']                 || attrs['input_tokens']       || 0);
-        outputTokens     += Number(attrs['llm.usage.completion_tokens']             || attrs['output_tokens']      || 0);
-        cacheReadTokens  += Number(attrs['llm.usage.cache_read_input_tokens']       || attrs['cache_read_tokens']  || 0);
-        cacheWriteTokens += Number(attrs['llm.usage.cache_creation_input_tokens']  || attrs['cache_write_tokens'] || 0);
-        costUsd          += Number(attrs['llm.usage.cost_usd']                      || attrs['cost_usd']           || 0);
-        durationMs       += Number(span.duration_ms || 0);
-      } catch { /* skip bad lines */ }
+    if (type === 'error') {
+      const sig = `auto-extract-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      db.prepare(
+        `INSERT INTO errors (session_id, first_seen, last_seen, error_signature, error_message, severity)
+         VALUES (?, ?, ?, ?, ?, 'medium')`
+      ).run(sessionId, ts, ts, sig, content);
+    } else if (type === 'decision') {
+      db.prepare(
+        `INSERT INTO decisions (session_id, created_at, category, title, reasoning, confidence)
+         VALUES (?, ?, 'auto-extracted', ?, '[auto-extracted]', 'low')`
+      ).run(sessionId, ts, content);
+    } else if (type === 'learning' || type === 'convention') {
+      db.prepare(
+        `INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, context, confidence)
+         VALUES (?, ?, ?, '[auto-extracted]', 'auto-extracted from transcript', 0.4)`
+      ).run(sessionId, ts, content);
     }
-
-    if (!found) return null;
-    return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, durationMs };
-  } catch { return null; }
+  } catch {
+    // Non-critical.
+  }
 }
 
-main().catch(err => { process.stderr.write(`Cortex SessionEnd: ${err.message}\n`); process.exit(0); });
+main().catch((err) => {
+  process.stderr.write(`Cortex SessionEnd: ${err.message}\n`);
+  process.exit(0);
+});

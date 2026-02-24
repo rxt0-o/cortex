@@ -247,25 +247,30 @@ export interface ScanResult {
 
 export function scanProject(rootPath: string): ScanResult {
   const db = getDb();
-  const allFiles = collectFiles(rootPath);
+  const normalizedRoot = path.resolve(rootPath);
+  const allFiles = collectFiles(normalizedRoot);
   let depsCount = 0;
+  const moduleIdCache = new Map<string, number>();
+  const deleteDepsStmt = db.prepare('DELETE FROM dependencies WHERE source_file = ?');
+  const insertDepStmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
 
   // Alles in einer Transaktion für Atomizität und Performance
   db.exec('BEGIN');
   try {
     for (const filePath of allFiles) {
-      const relativePath = filePath.replace(/\\/g, '/');
+      const relativePath = toRepoPath(path.relative(normalizedRoot, filePath));
       const fileType = inferFileType(relativePath);
       const modulePath = inferModulePath(relativePath);
 
       if (modulePath) {
         const moduleName = modulePath.split('/').pop() ?? modulePath;
         const layer = inferLayer(relativePath);
-        upsertModule({ path: modulePath, name: moduleName, layer });
-        const mod = getModuleByPath(modulePath);
-        if (mod) {
-          upsertFile({ path: relativePath, module_id: mod.id, file_type: fileType ?? undefined });
+        let moduleId = moduleIdCache.get(modulePath);
+        if (moduleId === undefined) {
+          moduleId = upsertModule({ path: modulePath, name: moduleName, layer }).id;
+          moduleIdCache.set(modulePath, moduleId);
         }
+        upsertFile({ path: relativePath, module_id: moduleId, file_type: fileType ?? undefined });
       } else {
         upsertFile({ path: relativePath, file_type: fileType ?? undefined });
       }
@@ -275,10 +280,9 @@ export function scanProject(rootPath: string): ScanResult {
         if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext)) {
           const content = fs.readFileSync(filePath, 'utf-8');
           const imports = extractImports(content, ext);
-          db.prepare('DELETE FROM dependencies WHERE source_file = ?').run(relativePath);
-          const stmt = db.prepare('INSERT OR IGNORE INTO dependencies (source_file, target_file, import_type) VALUES (?, ?, ?)');
+          deleteDepsStmt.run(relativePath);
           for (const imp of imports) {
-            stmt.run(relativePath, imp, 'static');
+            insertDepStmt.run(relativePath, imp, 'static');
             depsCount++;
           }
         }
@@ -320,6 +324,10 @@ function inferLayer(filePath: string): string {
   if (p.includes('supabase/')) return 'database';
   if (p.includes('scripts/')) return 'tooling';
   return 'other';
+}
+
+function toRepoPath(value: string): string {
+  return value.replace(/\\/g, '/');
 }
 
 function extractImports(content: string, ext: string): string[] {

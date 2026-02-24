@@ -10,7 +10,15 @@ import * as sessions from '../modules/sessions.js';
 import * as search from '../modules/search.js';
 import * as health from '../modules/health.js';
 import * as projectMap from '../modules/project-map.js';
+import { embedAsync } from '../modules/embed-hooks.js';
+import { backfillEmbeddings, getEmbeddingCount } from '../modules/embeddings.js';
+import { isGeminiAvailable, summarizeWithGemini } from '../utils/gemini.js';
 import { runAllPruning } from '../helpers.js';
+import { runDecay, touchMemory } from '../modules/decay.js';
+import { computeImportance, clearImportanceCache } from '../modules/importance.js';
+import * as extractions from '../modules/extractions.js';
+import { autoCreateAssociations, autoCreateSemanticAssociations } from '../modules/associations.js';
+import { activateForFiles } from '../modules/activation.js';
 
 export function registerCoreTools(server: McpServer): void {
 
@@ -46,6 +54,8 @@ export function registerCoreTools(server: McpServer): void {
       // todo / intent / note
       description: z.string().optional().describe('todo: what needs to be done'),
       priority: z.enum(['low', 'medium', 'high']).optional(),
+      blocked_by: z.array(z.number().int().positive()).optional()
+        .describe('todo: IDs of unresolved todos that must be completed first'),
       intent: z.string().optional().describe('intent: what you plan to do next session'),
       // note
       text: z.string().optional().describe('note: content'),
@@ -72,6 +82,12 @@ export function registerCoreTools(server: McpServer): void {
           confidence: input.confidence,
           session_id: input.session_id,
         });
+        try {
+          const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: new Date().toISOString(), priority: input.confidence, entityType: 'decision', sessionId: input.session_id });
+          getDb().prepare('UPDATE decisions SET importance_score = ? WHERE id = ?').run(score, decision.id);
+        } catch { /* non-critical */ }
+        try { autoCreateAssociations({ entityType: 'decision', entityId: decision.id, sessionId: input.session_id, files: input.files_affected }); } catch { /* non-critical */ }
+        autoCreateSemanticAssociations({ entityType: 'decision', entityId: decision.id, embeddingText: `${input.title} ${input.reasoning}`.slice(0, 512) }).catch(() => {});
         let text = `Decision saved (id: ${decision.id})`;
         if (duplicate) text += `
 Possible duplicate of #${duplicate.id} (${duplicate.score}% similar): \"${duplicate.title}\"`;
@@ -91,6 +107,12 @@ Possible duplicate of #${duplicate.id} (${duplicate.score}% similar): \"${duplic
           files_involved: input.files_involved,
           session_id: input.session_id,
         });
+        try {
+          const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: new Date().toISOString(), severity: input.severity, entityType: 'error', sessionId: input.session_id });
+          getDb().prepare('UPDATE errors SET importance_score = ? WHERE id = ?').run(score, err.id);
+        } catch { /* non-critical */ }
+        try { autoCreateAssociations({ entityType: 'error', entityId: err.id, sessionId: input.session_id, files: input.files_involved }); } catch { /* non-critical */ }
+        autoCreateSemanticAssociations({ entityType: 'error', entityId: err.id, embeddingText: `${input.error_message} ${input.root_cause ?? ''} ${input.fix_description ?? ''}`.slice(0, 512) }).catch(() => {});
         return { content: [{ type: 'text' as const, text: JSON.stringify(err, null, 2) }] };
       }
 
@@ -107,6 +129,12 @@ Possible duplicate of #${duplicate.id} (${duplicate.score}% similar): \"${duplic
           auto_block: input.auto_block,
           session_id: input.session_id,
         });
+        try {
+          const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: new Date().toISOString(), severity: input.severity as string | undefined, entityType: 'learning', sessionId: input.session_id });
+          getDb().prepare('UPDATE learnings SET importance_score = ? WHERE id = ?').run(score, learning.id);
+        } catch { /* non-critical */ }
+        try { autoCreateAssociations({ entityType: 'learning', entityId: learning.id, sessionId: input.session_id }); } catch { /* non-critical */ }
+        autoCreateSemanticAssociations({ entityType: 'learning', entityId: learning.id, embeddingText: `${input.anti_pattern} ${input.correct_pattern} ${input.context}`.slice(0, 512) }).catch(() => {});
         let text = `Learning saved (id: ${learning.id})`;
         if (duplicate) text += `
 Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
@@ -117,13 +145,25 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
         if (!input.description) {
           return { content: [{ type: 'text' as const, text: 'Error: todo requires description' }] };
         }
-        const item = unfinished.addUnfinished({
-          description: input.description,
-          context: input.context,
-          priority: input.priority,
-          session_id: input.session_id,
-        });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }] };
+        try {
+          const result = unfinished.addUnfinished({
+            description: input.description,
+            context: input.context,
+            priority: input.priority,
+            session_id: input.session_id,
+            blocked_by: input.blocked_by,
+          });
+          try {
+            const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: new Date().toISOString(), priority: input.priority, entityType: 'unfinished', sessionId: input.session_id });
+            getDb().prepare('UPDATE unfinished SET importance_score = ? WHERE id = ?').run(score, result.item.id);
+          } catch { /* non-critical */ }
+          try { autoCreateAssociations({ entityType: 'unfinished', entityId: result.item.id, sessionId: input.session_id }); } catch { /* non-critical */ }
+          autoCreateSemanticAssociations({ entityType: 'unfinished', entityId: result.item.id, embeddingText: `${input.description} ${input.context ?? ''}`.slice(0, 512) }).catch(() => {});
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text' as const, text: `Error: ${message}` }] };
+        }
       }
 
       if (type === 'intent') {
@@ -155,7 +195,15 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
           input.session_id ?? null,
           ts
         );
-        return { content: [{ type: 'text' as const, text: `Note saved (id: ${result.lastInsertRowid})` }] };
+        const insertedId = Number(result.lastInsertRowid);
+        try {
+          const score = computeImportance({ accessCount: 0, lastAccessed: null, createdAt: ts, entityType: 'note', sessionId: input.session_id });
+          db.prepare('UPDATE notes SET importance_score = ? WHERE id = ?').run(score, insertedId);
+        } catch { /* non-critical */ }
+        try { autoCreateAssociations({ entityType: 'note', entityId: insertedId, sessionId: input.session_id }); } catch { /* non-critical */ }
+        autoCreateSemanticAssociations({ entityType: 'note', entityId: insertedId, embeddingText: `${input.text} ${(input.tags ?? []).join(' ')}`.slice(0, 512) }).catch(() => {});
+        embedAsync('note', insertedId, { text: input.text, tags: (input.tags ?? []).join(' ') });
+        return { content: [{ type: 'text' as const, text: `Note saved (id: ${insertedId})` }] };
       }
 
       return { content: [{ type: 'text' as const, text: `Unknown type: ${type}` }] };
@@ -169,12 +217,34 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
     {
       query: z.string().describe('Search query (FTS5: AND, OR, NOT, "phrase")'),
       limit: z.number().optional().describe('Max results (default: 15)'),
+      summarize: z.boolean().optional().describe('Optional AI summary (requires GEMINI_API_KEY)'),
     },
-    async ({ query, limit }) => {
+    async ({ query, limit, summarize }) => {
       getDb();
       const results = await search.searchAll(query, limit ?? 15);
       const formatted = search.formatResults(results);
-      return { content: [{ type: 'text' as const, text: formatted }] };
+      if (!summarize) {
+        return { content: [{ type: 'text' as const, text: formatted }] };
+      }
+
+      if (!isGeminiAvailable()) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Gemini summary unavailable: set GEMINI_API_KEY (or GOOGLE_API_KEY).\n\n${formatted}`,
+          }],
+        };
+      }
+
+      const summary = await summarizeWithGemini({
+        title: `Summarize Cortex search for query: ${query}`,
+        text: formatted,
+        maxOutputTokens: 500,
+      });
+      const combined = summary
+        ? `AI SUMMARY\n${summary}\n\nRAW RESULTS\n${formatted}`
+        : formatted;
+      return { content: [{ type: 'text' as const, text: combined }] };
     }
   );
 
@@ -183,19 +253,53 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
     'Get session context: recent sessions, todos, learnings, health. Pass files for file-specific context.',
     {
       files: z.array(z.string()).optional().describe('File paths for targeted context'),
+      summarize: z.boolean().optional().describe('Optional AI summary (requires GEMINI_API_KEY)'),
+      summary_only: z.boolean().optional().describe('Return only summary text'),
     },
-    async ({ files }) => {
+    async ({ files, summarize, summary_only }) => {
       getDb();
       const ctx: Record<string, unknown> = {};
       ctx.recentSessions = sessions.getRecentSummaries(3);
       ctx.unfinished = unfinished.listUnfinished({ limit: 10 });
       if (files && files.length > 0) {
         ctx.fileErrors = errors.getErrorsForFiles(files);
+        try {
+          const activated = activateForFiles(files);
+          if (activated.length > 0) {
+            ctx.activatedMemories = activated.slice(0, 10);
+          }
+        } catch { /* non-critical */ }
       }
       ctx.activeLearnings = learnings.listLearnings({ autoBlockOnly: true });
       ctx.health = health.getLatestSnapshot();
       ctx.projectMap = projectMap.getModuleSummary();
-      return { content: [{ type: 'text' as const, text: JSON.stringify(ctx, null, 2) }] };
+      const raw = JSON.stringify(ctx, null, 2);
+
+      if (!summarize) {
+        return { content: [{ type: 'text' as const, text: raw }] };
+      }
+
+      if (!isGeminiAvailable()) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Gemini summary unavailable: set GEMINI_API_KEY (or GOOGLE_API_KEY).\n\n${raw}`,
+          }],
+        };
+      }
+
+      const summary = await summarizeWithGemini({
+        title: 'Summarize Cortex context block',
+        text: raw,
+        maxOutputTokens: 700,
+      });
+
+      if (!summary) {
+        return { content: [{ type: 'text' as const, text: raw }] };
+      }
+
+      const out = summary_only ? summary : `AI SUMMARY\n${summary}\n\nRAW CONTEXT\n${raw}`;
+      return { content: [{ type: 'text' as const, text: out }] };
     }
   );
 
@@ -203,11 +307,13 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
     'cortex_list',
     'List stored items by type',
     {
-      type: z.enum(['decisions', 'errors', 'learnings', 'todos', 'notes'])
+      type: z.enum(['decisions', 'errors', 'learnings', 'todos', 'notes', 'extractions'])
         .describe('What to list'),
       category: z.string().optional().describe('decisions: filter by category'),
       severity: z.string().optional().describe('errors/learnings: filter by severity'),
       auto_block_only: z.boolean().optional().describe('learnings: only auto-blocking rules'),
+      filter: z.enum(['all', 'actionable']).optional()
+        .describe('todos: "actionable" shows only unblocked unresolved items'),
       limit: z.number().optional(),
     },
     async (input) => {
@@ -221,9 +327,11 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
       } else if (input.type === 'learnings') {
         result = learnings.listLearnings({ autoBlockOnly: input.auto_block_only, limit: input.limit ?? 50 });
       } else if (input.type === 'todos') {
-        result = unfinished.listUnfinished({ limit: input.limit });
+        result = unfinished.listUnfinished({ limit: input.limit, filter: input.filter });
       } else if (input.type === 'notes') {
         result = db.prepare(`SELECT * FROM notes WHERE 1=1 ORDER BY created_at DESC LIMIT ?`).all(input.limit ?? 50);
+      } else if (input.type === 'extractions') {
+        result = extractions.listExtractions({ status: input.filter ?? 'pending', limit: input.limit });
       }
 
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -234,24 +342,43 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
     'cortex_resolve',
     'Close/update an item: mark todo resolved, decision reviewed, or update an error',
     {
-      type: z.enum(['todo', 'decision', 'error']),
+      type: z.enum(['todo', 'decision', 'error', 'extraction']),
       id: z.number(),
       fix_description: z.string().optional(),
       prevention_rule: z.string().optional(),
       severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+      action: z.enum(['promote', 'reject']).optional()
+        .describe('extraction: promote to real entry or reject'),
       session_id: z.string().optional(),
     },
     async (input) => {
       getDb();
       if (input.type === 'todo') {
-        const item = unfinished.resolveUnfinished(input.id, input.session_id);
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ resolved: true, item }, null, 2) }] };
+        touchMemory('unfinished', input.id);
+        const result = unfinished.resolveUnfinished(input.id, input.session_id);
+        const unblocked = result.newly_unblocked;
+        const note = unblocked.length > 0
+          ? `\n${unblocked.length} dependent todo(s) may now be actionable: ${unblocked.map((u) => `#${u.id}`).join(', ')}`
+          : '';
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              resolved: true,
+              item: result.item,
+              newly_unblocked: unblocked,
+              message: `Todo #${input.id} resolved.${note}`,
+            }, null, 2),
+          }],
+        };
       }
       if (input.type === 'decision') {
+        touchMemory('decisions', input.id);
         getDb().prepare(`UPDATE decisions SET stale=0, reviewed_at=datetime('now') WHERE id=?`).run(input.id);
         return { content: [{ type: 'text' as const, text: `Decision ${input.id} marked as reviewed.` }] };
       }
       if (input.type === 'error') {
+        touchMemory('errors', input.id);
         const err = errors.updateError({
           id: input.id,
           fix_description: input.fix_description,
@@ -259,6 +386,25 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
           severity: input.severity,
         });
         return { content: [{ type: 'text' as const, text: JSON.stringify(err, null, 2) }] };
+      }
+      if (input.type === 'extraction') {
+        try {
+          const action = input.action ?? 'promote';
+          if (action === 'reject') {
+            extractions.rejectExtraction(input.id);
+            return { content: [{ type: 'text' as const, text: `Extraction #${input.id} rejected.` }] };
+          }
+          const result = extractions.promoteExtraction(input.id);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Extraction #${input.id} promoted to ${result.type} #${result.targetId}.`,
+            }],
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text' as const, text: `Error: ${message}` }] };
+        }
       }
       return { content: [{ type: 'text' as const, text: `Unknown type: ${input.type}` }] };
     }
@@ -281,6 +427,38 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
         `INSERT INTO unfinished (description,context,priority,session_id,snooze_until,created_at) VALUES (?,?,?,?,?,datetime('now'))`
       ).run(description, 'snoozed', 'medium', session_id ?? null, d.toISOString());
       return { content: [{ type: 'text' as const, text: `Reminder set for ${d.toISOString().slice(0, 10)}` }] };
+    }
+  );
+
+  server.tool(
+    'cortex_reindex_embeddings',
+    'Build or refresh vector embeddings for semantic search over existing memory.',
+    {
+      limit_per_type: z.number().optional().describe('Max items per entity type (default: 300)'),
+      force: z.boolean().optional().describe('Re-embed even if embedding already exists'),
+      include_resolved_todos: z.boolean().optional().describe('Include resolved unfinished items'),
+    },
+    async ({ limit_per_type, force, include_resolved_todos }) => {
+      getDb();
+      const before = getEmbeddingCount();
+      const result = await backfillEmbeddings({
+        limitPerType: limit_per_type ?? 300,
+        force: force ?? false,
+        includeResolvedTodos: include_resolved_todos ?? false,
+      });
+      const after = getEmbeddingCount();
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            success: true,
+            before_count: before,
+            after_count: after,
+            ...result,
+            hint: 'Use cortex_search for semantic context queries.',
+          }, null, 2),
+        }],
+      };
     }
   );
 

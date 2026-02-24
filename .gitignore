@@ -5,6 +5,19 @@
 **/.claude/cortex-daemon.pid
 **/.claude/cortex-events.jsonl
 **/.claude/cortex-feedback.jsonl
+**/.claude/cortex-daemon.heartbeat
+**/.claude/cortex-watcher.pid
+
+# Claude Code local settings
+.claude/settings.local.json
+server/.claude/
+
+# Claude Code project files (local only)
+CLAUDE.md
+agents/
+
+# Internal plans and design docs
+docs/plans/
 
 # Dependencies
 node_modules/
@@ -12,9 +25,6 @@ node_modules/
 # TypeScript Build Output (außer pre-built dist/)
 # (dist/ wird committed für Zero-Build-Installation)
 dist/
-!daemon/dist/
 !server/dist/
-
-# Daemon dist wird getrackt (kein Build-Schritt beim Deployment noetig)
 
 package-lock.json
