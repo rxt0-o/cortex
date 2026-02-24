@@ -1,5 +1,11 @@
-import { getDb } from '../db.js';
+import { getDb, isVecAvailable } from '../db.js';
 let pipeline = null;
+const VEC_DISTANCE_MAX = (() => {
+    const parsed = Number.parseFloat(process.env.CORTEX_VEC_DISTANCE_MAX ?? '1.5');
+    if (Number.isFinite(parsed) && parsed >= 0)
+        return parsed;
+    return 1.5;
+})();
 /**
  * Lazy-load the embedding pipeline. First call takes ~2-3s (model download + init).
  * Uses all-MiniLM-L6-v2 (384-dimensional, ~22MB).
@@ -37,10 +43,42 @@ export function cosineSimilarity(a, b) {
 export function storeEmbedding(entityType, entityId, embedding, model = 'all-MiniLM-L6-v2') {
     const db = getDb();
     const blob = Buffer.from(embedding.buffer);
+    const normalizedEntityId = String(entityId);
+    // Legacy table remains source-compatible for fallback and older deployments.
     db.prepare(`
     INSERT OR REPLACE INTO embeddings (entity_type, entity_id, embedding, model, created_at)
     VALUES (?, ?, ?, ?, datetime('now'))
-  `).run(entityType, String(entityId), blob, model);
+  `).run(entityType, normalizedEntityId, blob, model);
+    if (!isVecAvailable())
+        return;
+    // vec path is best-effort and always dual-write with legacy table above.
+    const vectorJson = JSON.stringify(Array.from(embedding));
+    db.exec('BEGIN IMMEDIATE');
+    try {
+        db.prepare(`
+      INSERT INTO embedding_meta (entity_type, entity_id, model, created_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(entity_type, entity_id)
+      DO UPDATE SET model = excluded.model, created_at = datetime('now')
+    `).run(entityType, normalizedEntityId, model);
+        const metaRow = db.prepare(`
+      SELECT id FROM embedding_meta
+      WHERE entity_type = ? AND entity_id = ?
+      LIMIT 1
+    `).get(entityType, normalizedEntityId);
+        if (!metaRow?.id) {
+            throw new Error('embedding_meta upsert failed');
+        }
+        db.prepare(`DELETE FROM vec_embeddings WHERE rowid = ?`).run(metaRow.id);
+        db.prepare(`INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`).run(metaRow.id, vectorJson);
+        db.exec('COMMIT');
+    }
+    catch {
+        try {
+            db.exec('ROLLBACK');
+        }
+        catch { /* noop */ }
+    }
 }
 /**
  * Get all stored embeddings.
@@ -64,6 +102,12 @@ export function getAllEmbeddings() {
  */
 export async function findSimilar(queryText, limit = 15) {
     const queryEmb = await embed(queryText);
+    if (isVecAvailable()) {
+        const vecResults = findSimilarVec(queryEmb, limit);
+        if (vecResults.length > 0) {
+            return vecResults;
+        }
+    }
     const all = getAllEmbeddings();
     const scored = all.map((row) => ({
         entity_type: row.entity_type,
@@ -72,6 +116,30 @@ export async function findSimilar(queryText, limit = 15) {
     }));
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, limit);
+}
+function findSimilarVec(queryEmbedding, limit) {
+    const db = getDb();
+    const vectorJson = JSON.stringify(Array.from(queryEmbedding));
+    try {
+        const rows = db.prepare(`
+      SELECT em.entity_type, em.entity_id, ve.distance
+      FROM vec_embeddings ve
+      JOIN embedding_meta em ON em.id = ve.rowid
+      WHERE ve.embedding MATCH ?
+        AND k = ?
+      ORDER BY ve.distance
+    `).all(vectorJson, limit);
+        return rows
+            .filter((row) => Number.isFinite(row.distance) && row.distance <= VEC_DISTANCE_MAX)
+            .map((row) => ({
+            entity_type: row.entity_type,
+            entity_id: row.entity_id,
+            score: 1 / (1 + Math.max(0, row.distance)),
+        }));
+    }
+    catch {
+        return [];
+    }
 }
 /**
  * Build combined text for embedding (max ~512 chars to stay in model sweet spot).
@@ -108,6 +176,17 @@ export function getEmbeddingCount() {
  * Check if embeddings table is available and has data.
  */
 export function isAvailable() {
+    if (isVecAvailable()) {
+        const db = getDb();
+        try {
+            const row = db.prepare('SELECT COUNT(*) as c FROM embedding_meta').get();
+            if ((row.c ?? 0) > 0)
+                return true;
+        }
+        catch {
+            // Fall through to legacy count.
+        }
+    }
     return getEmbeddingCount() > 0;
 }
 /**
@@ -166,8 +245,9 @@ export async function backfillEmbeddings(options) {
     return result;
 }
 function getExistingKeys(db) {
+    const sourceTable = isVecAvailable() ? 'embedding_meta' : 'embeddings';
     try {
-        const rows = db.prepare('SELECT entity_type, entity_id FROM embeddings').all();
+        const rows = db.prepare(`SELECT entity_type, entity_id FROM ${sourceTable}`).all();
         return new Set(rows.map((r) => `${r.entity_type}:${r.entity_id}`));
     }
     catch {

@@ -30,7 +30,7 @@ Cortex gives Claude Code a long-term brain. It tracks sessions, remembers decisi
 |---|---|
 | **Error Memory** | Remembers every error + fix. Same error? Instant answer |
 | **Regression Guard** | PreToolUse hook blocks changes that reintroduce known bugs |
-| **Semantic Search** | Hybrid BM25 + vector search (`all-MiniLM-L6-v2`) |
+| **Semantic Search** | Hybrid BM25 + semantic vector search (`all-MiniLM-L6-v2`) with sqlite-vec (auto) + JS fallback |
 | **Dependency Graph** | Import-based: "Change X → Y and Z affected" |
 | **Hot Zones** | Most-changed files, bug origins, refactoring candidates |
 | **Health Score** | Error frequency, open TODOs, convention compliance. Trend over time |
@@ -41,6 +41,7 @@ Cortex gives Claude Code a long-term brain. It tracks sessions, remembers decisi
 - **Node.js >= 22** (uses built-in `node:sqlite`)
 - **MCP client** (Claude Code and/or [Codex CLI](https://github.com/openai/codex))
 - **Optional:** `GEMINI_API_KEY` for AI summaries
+- **Optional (Windows):** sqlite-vec runtime for native KNN (`sqlite-vec` npm package is auto-installed by `mcp:install*`)
 
 ## Installation
 
@@ -56,8 +57,10 @@ What this does:
 - builds `server/dist/bundle.js`
 - **Claude Code**: registers cortex as user-scope MCP server (`claude mcp add --scope user`) + merges hooks into `~/.claude/settings.json`
 - **Codex CLI**: registers cortex via `codex mcp add` (saved in `~/.codex/config.toml`)
+- **Windows:** tries to auto-install `sqlite-vec` runtime (`server/node_modules/sqlite-vec`) for native vector search
 
 After install, **restart your client**. Cortex is now available in every project. The DB is created per-project at `.claude/cortex.db`.
+If sqlite-vec is unavailable, Cortex automatically falls back to JS cosine search.
 
 > **Note:** Hooks (Regression Guard, Auto-Extraction, Context Injection at session start) are Claude Code only. Codex CLI gets the full 16 MCP tools but no hook automation.
 
@@ -75,6 +78,7 @@ What this does:
 - builds `server/dist/bundle.js`
 - writes `.mcp.json` in the cortex repo (only works when opened in this directory)
 - tries `codex mcp add` if Codex CLI is installed
+- **Windows:** tries to auto-install `sqlite-vec` runtime (`server/node_modules/sqlite-vec`) for native vector search
 
 ### Optional: AI summaries
 
@@ -84,6 +88,19 @@ $env:GEMINI_API_KEY="YOUR_KEY"
 
 # macOS/Linux
 export GEMINI_API_KEY="YOUR_KEY"
+```
+
+### Optional: sqlite-vec overrides
+
+```bash
+# disable sqlite-vec and force JS fallback
+CORTEX_VEC_DISABLE=1
+
+# pin sqlite-vec npm version used by installer (Windows)
+CORTEX_SQLITE_VEC_VERSION=0.1.7-alpha.2
+
+# explicit DLL path (fallback if npm runtime is unavailable)
+CORTEX_VEC_DLL_PATH=C:\tools\sqlite-vec\vec0.dll
 ```
 
 ### Claude Plugin (alternative)
@@ -188,7 +205,7 @@ cortex/
 ├── server/                     # MCP Server (TypeScript)
 │   └── src/
 │       ├── index.ts            # Server bootstrap + tool registration
-│       ├── db.ts               # SQLite schema v9 + migrations
+│       ├── db.ts               # SQLite schema v10 + migrations (+ sqlite-vec auto-load)
 │       ├── shared/
 │       │   └── fts-schema.ts   # FTS5 tables + triggers (single source of truth)
 │       ├── modules/
@@ -270,15 +287,16 @@ cortex/
 
 SQLite at `.claude/cortex.db` — one per project, created automatically.
 
-**Schema v9 tables:**
+**Schema v10 tables:**
 - **Memory:** `sessions`, `decisions`, `errors`, `learnings`, `working_memory`, `auto_extractions`, `notes`
 - **Graph:** `memory_associations`, `dependencies`, `activity_log`
 - **Project:** `project_modules`, `project_files`, `conventions`, `unfinished`, `diffs`
-- **Index:** `embeddings`, `meta`, `health_snapshots`, `schema_version`
+- **Index:** `embeddings`, `embedding_meta`, `meta`, `health_snapshots`, `schema_version`
+- **Vector (optional):** `vec_embeddings` virtual table (available when sqlite-vec runtime loads)
 
 All tables have FTS5 full-text search indexes with automatic INSERT/UPDATE/DELETE triggers.
 
-Uses `node:sqlite` (Node.js built-in). Zero native dependencies.
+Uses `node:sqlite` (Node.js built-in). sqlite-vec is auto-loaded when available (npm `sqlite-vec`, DLL path, or `server/native/vec0.dll`), otherwise Cortex uses JS fallback automatically.
 
 ---
 

@@ -13,6 +13,9 @@ const serverDir = path.join(repoRoot, 'server');
 const bundlePath = path.join(serverDir, 'dist', 'bundle.js');
 const mcpConfigPath = path.join(repoRoot, '.mcp.json');
 const isWindows = process.platform === 'win32';
+const vecDllPath = path.join(serverDir, 'native', 'vec0.dll');
+const sqliteVecModuleDir = path.join(serverDir, 'node_modules', 'sqlite-vec');
+const SQLITE_VEC_VERSION = process.env.CORTEX_SQLITE_VEC_VERSION || '0.1.7-alpha.2';
 
 const npmCmd = 'npm';
 const codexCmd = 'codex';
@@ -338,11 +341,39 @@ function ensureBuild() {
     runOrThrow(npmCmd, ['install'], serverDir);
   }
 
+  ensureSqliteVecRuntime();
+
   console.log('Building MCP server...');
   runOrThrow(npmCmd, ['run', 'build'], serverDir);
 
   if (!fs.existsSync(bundlePath)) {
     throw new Error(`Build succeeded but bundle was not found: ${bundlePath}`);
+  }
+
+  const envVecPath = process.env.CORTEX_VEC_DLL_PATH || '';
+  const hasEnvDll = envVecPath && fs.existsSync(envVecPath);
+  const hasLocalDll = fs.existsSync(vecDllPath);
+  const hasSqliteVecPackage = fs.existsSync(sqliteVecModuleDir);
+  if (isWindows && !hasSqliteVecPackage && !hasLocalDll && !hasEnvDll) {
+    console.log('');
+    console.log('sqlite-vec runtime not found (auto-fallback to JS embeddings).');
+    console.log('Expected one of:');
+    console.log(`  - npm package sqlite-vec (auto-install failed)`);
+    console.log(`  - ${vecDllPath}`);
+    console.log('  - CORTEX_VEC_DLL_PATH=<absolute-path-to-vec0.dll>');
+  }
+}
+
+function ensureSqliteVecRuntime() {
+  if (!isWindows) return;
+  if (fs.existsSync(sqliteVecModuleDir)) return;
+
+  console.log(`Installing sqlite-vec runtime (sqlite-vec@${SQLITE_VEC_VERSION})...`);
+  try {
+    runOrThrow(npmCmd, ['install', '--no-save', `sqlite-vec@${SQLITE_VEC_VERSION}`], serverDir);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`sqlite-vec auto-install failed (${message}). Continuing with JS embedding fallback.`);
   }
 }
 

@@ -6943,6 +6943,8 @@ END;
 import { DatabaseSync } from "node:sqlite";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 function getDbPath(projectDir) {
   const dir = projectDir ?? process.cwd();
   const claudeDir = path.join(dir, ".claude");
@@ -6955,11 +6957,12 @@ function getDb(projectDir) {
   if (db)
     return db;
   const dbPath = getDbPath(projectDir);
-  db = new DatabaseSync(dbPath);
+  db = new DatabaseSync(dbPath, { allowExtension: true });
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
+  initVecExtension(db);
   initSchema(db);
   return db;
 }
@@ -6970,6 +6973,7 @@ function initSchema(database) {
     database.exec(FTS_TABLES);
     database.exec(FTS_TRIGGER_DROPS);
     database.exec(FTS_TRIGGERS);
+    ensureVecSchema(database);
     ensureSchemaVersionRow(database);
     database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
     return;
@@ -6990,6 +6994,7 @@ function initSchema(database) {
   }
   database.exec(FTS_TRIGGER_DROPS);
   database.exec(FTS_TRIGGERS);
+  ensureVecSchema(database);
   const backfillSql = [
     `UPDATE decisions SET memory_strength = 1.0 WHERE memory_strength IS NULL`,
     `UPDATE decisions SET importance_score = 0.5 WHERE importance_score IS NULL`,
@@ -7013,6 +7018,106 @@ function initSchema(database) {
   ensureSchemaVersionRow(database);
   database.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
 }
+function initVecExtension(database) {
+  vecAvailable = false;
+  vecExtensionPath = null;
+  vecInitError = null;
+  if (process.env.CORTEX_VEC_DISABLE === "1") {
+    vecInitError = "disabled by CORTEX_VEC_DISABLE=1";
+    return;
+  }
+  if (tryLoadVecFromPackage(database)) {
+    return;
+  }
+  const resolvedPath = resolveVecExtensionPath();
+  if (!resolvedPath) {
+    vecInitError = 'sqlite-vec not found (install npm package "sqlite-vec", or set CORTEX_VEC_DLL_PATH / server/native/vec0.dll)';
+    return;
+  }
+  try {
+    database.loadExtension(resolvedPath);
+    vecAvailable = true;
+    vecExtensionPath = resolvedPath;
+  } catch (error48) {
+    vecInitError = error48 instanceof Error ? error48.message : String(error48);
+  }
+}
+function tryLoadVecFromPackage(database) {
+  try {
+    const sqliteVec = require2("sqlite-vec");
+    const loadFn = sqliteVec?.load ?? sqliteVec?.default?.load;
+    if (typeof loadFn !== "function") {
+      return false;
+    }
+    loadFn(database);
+    vecAvailable = true;
+    vecExtensionPath = "npm:sqlite-vec";
+    return true;
+  } catch {
+    return false;
+  }
+}
+function resolveVecExtensionPath() {
+  const envPath = process.env.CORTEX_VEC_DLL_PATH?.trim();
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath;
+  }
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const nativeDirs = [
+    path.resolve(moduleDir, "../native"),
+    path.resolve(moduleDir, "../../native")
+  ];
+  const candidateNames = process.platform === "win32" ? ["vec0.dll"] : process.platform === "darwin" ? ["vec0.dylib", "libvec0.dylib"] : ["vec0.so", "libvec0.so"];
+  for (const dir of nativeDirs) {
+    for (const name of candidateNames) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+function ensureVecSchema(database) {
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(entity_type, entity_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity
+      ON embedding_meta(entity_type, entity_id);
+    `);
+  } catch {
+  }
+  if (!vecAvailable)
+    return;
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+        embedding float[384]
+      );
+    `);
+  } catch (error48) {
+    vecAvailable = false;
+    vecInitError = error48 instanceof Error ? error48.message : String(error48);
+    return;
+  }
+  try {
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS embedding_meta_ad
+      AFTER DELETE ON embedding_meta
+      BEGIN
+        DELETE FROM vec_embeddings WHERE rowid = old.id;
+      END;
+    `);
+  } catch {
+  }
+}
 function hasTable(database, name) {
   const row = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(name);
   return Boolean(row);
@@ -7028,6 +7133,12 @@ function closeDb() {
     db.close();
     db = null;
   }
+  vecAvailable = false;
+  vecExtensionPath = null;
+  vecInitError = null;
+}
+function isVecAvailable() {
+  return vecAvailable;
 }
 function now() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -7048,13 +7159,17 @@ function toJson(value) {
     return null;
   return JSON.stringify(value);
 }
-var db, SCHEMA_VERSION, SCHEMA_SQL, COMPAT_MIGRATIONS;
+var db, vecAvailable, vecExtensionPath, vecInitError, require2, SCHEMA_VERSION, SCHEMA_SQL, COMPAT_MIGRATIONS;
 var init_db = __esm({
   "dist/db.js"() {
     "use strict";
     init_fts_schema();
     db = null;
-    SCHEMA_VERSION = 9;
+    vecAvailable = false;
+    vecExtensionPath = null;
+    vecInitError = null;
+    require2 = createRequire(import.meta.url);
+    SCHEMA_VERSION = 10;
     SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -7272,6 +7387,15 @@ CREATE TABLE IF NOT EXISTS embeddings (
   UNIQUE(entity_type, entity_id)
 );
 
+CREATE TABLE IF NOT EXISTS embedding_meta (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(entity_type, entity_id)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -7342,6 +7466,7 @@ CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
 CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity ON embedding_meta(entity_type, entity_id);
 
 CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC);
 CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status);
@@ -7394,6 +7519,16 @@ CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_sc
     entity_type TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     embedding BLOB NOT NULL,
+    model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(entity_type, entity_id)
+  )
+  `,
+      `
+  CREATE TABLE IF NOT EXISTS embedding_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
     model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(entity_type, entity_id)
@@ -7465,6 +7600,7 @@ CREATE INDEX IF NOT EXISTS idx_unfinished_importance ON unfinished(importance_sc
       `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
       `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
       `CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity ON embedding_meta(entity_type, entity_id)`,
       // Phase 4: Brain Foundation — neue Tabellen
       `CREATE TABLE IF NOT EXISTS working_memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7578,10 +7714,39 @@ function cosineSimilarity2(a, b) {
 function storeEmbedding(entityType, entityId, embedding, model = "all-MiniLM-L6-v2") {
   const db2 = getDb();
   const blob = Buffer.from(embedding.buffer);
+  const normalizedEntityId = String(entityId);
   db2.prepare(`
     INSERT OR REPLACE INTO embeddings (entity_type, entity_id, embedding, model, created_at)
     VALUES (?, ?, ?, ?, datetime('now'))
-  `).run(entityType, String(entityId), blob, model);
+  `).run(entityType, normalizedEntityId, blob, model);
+  if (!isVecAvailable())
+    return;
+  const vectorJson = JSON.stringify(Array.from(embedding));
+  db2.exec("BEGIN IMMEDIATE");
+  try {
+    db2.prepare(`
+      INSERT INTO embedding_meta (entity_type, entity_id, model, created_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(entity_type, entity_id)
+      DO UPDATE SET model = excluded.model, created_at = datetime('now')
+    `).run(entityType, normalizedEntityId, model);
+    const metaRow = db2.prepare(`
+      SELECT id FROM embedding_meta
+      WHERE entity_type = ? AND entity_id = ?
+      LIMIT 1
+    `).get(entityType, normalizedEntityId);
+    if (!metaRow?.id) {
+      throw new Error("embedding_meta upsert failed");
+    }
+    db2.prepare(`DELETE FROM vec_embeddings WHERE rowid = ?`).run(metaRow.id);
+    db2.prepare(`INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`).run(metaRow.id, vectorJson);
+    db2.exec("COMMIT");
+  } catch {
+    try {
+      db2.exec("ROLLBACK");
+    } catch {
+    }
+  }
 }
 function getAllEmbeddings() {
   const db2 = getDb();
@@ -7598,6 +7763,12 @@ function getAllEmbeddings() {
 }
 async function findSimilar2(queryText, limit = 15) {
   const queryEmb = await embed(queryText);
+  if (isVecAvailable()) {
+    const vecResults = findSimilarVec(queryEmb, limit);
+    if (vecResults.length > 0) {
+      return vecResults;
+    }
+  }
   const all = getAllEmbeddings();
   const scored = all.map((row) => ({
     entity_type: row.entity_type,
@@ -7606,6 +7777,27 @@ async function findSimilar2(queryText, limit = 15) {
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
+}
+function findSimilarVec(queryEmbedding, limit) {
+  const db2 = getDb();
+  const vectorJson = JSON.stringify(Array.from(queryEmbedding));
+  try {
+    const rows = db2.prepare(`
+      SELECT em.entity_type, em.entity_id, ve.distance
+      FROM vec_embeddings ve
+      JOIN embedding_meta em ON em.id = ve.rowid
+      WHERE ve.embedding MATCH ?
+        AND k = ?
+      ORDER BY ve.distance
+    `).all(vectorJson, limit);
+    return rows.filter((row) => Number.isFinite(row.distance) && row.distance <= VEC_DISTANCE_MAX).map((row) => ({
+      entity_type: row.entity_type,
+      entity_id: row.entity_id,
+      score: 1 / (1 + Math.max(0, row.distance))
+    }));
+  } catch {
+    return [];
+  }
 }
 function buildEmbeddingText(fields) {
   const parts = [];
@@ -7632,6 +7824,15 @@ function getEmbeddingCount() {
   }
 }
 function isAvailable() {
+  if (isVecAvailable()) {
+    const db2 = getDb();
+    try {
+      const row = db2.prepare("SELECT COUNT(*) as c FROM embedding_meta").get();
+      if ((row.c ?? 0) > 0)
+        return true;
+    } catch {
+    }
+  }
   return getEmbeddingCount() > 0;
 }
 async function isDuplicate(text, threshold = 0.92) {
@@ -7683,8 +7884,9 @@ async function backfillEmbeddings(options) {
   return result;
 }
 function getExistingKeys(db2) {
+  const sourceTable = isVecAvailable() ? "embedding_meta" : "embeddings";
   try {
-    const rows = db2.prepare("SELECT entity_type, entity_id FROM embeddings").all();
+    const rows = db2.prepare(`SELECT entity_type, entity_id FROM ${sourceTable}`).all();
     return new Set(rows.map((r) => `${r.entity_type}:${r.entity_id}`));
   } catch {
     return /* @__PURE__ */ new Set();
@@ -7780,12 +7982,18 @@ function collectBackfillCandidates(db2, limitPerType, includeResolvedTodos) {
   }
   return candidates;
 }
-var pipeline;
+var pipeline, VEC_DISTANCE_MAX;
 var init_embeddings = __esm({
   "dist/modules/embeddings.js"() {
     "use strict";
     init_db();
     pipeline = null;
+    VEC_DISTANCE_MAX = (() => {
+      const parsed = Number.parseFloat(process.env.CORTEX_VEC_DISTANCE_MAX ?? "1.5");
+      if (Number.isFinite(parsed) && parsed >= 0)
+        return parsed;
+      return 1.5;
+    })();
   }
 });
 
@@ -32896,6 +33104,7 @@ ${raw}`;
     severity: external_exports3.string().optional().describe("errors/learnings: filter by severity"),
     auto_block_only: external_exports3.boolean().optional().describe("learnings: only auto-blocking rules"),
     filter: external_exports3.enum(["all", "actionable"]).optional().describe('todos: "actionable" shows only unblocked unresolved items'),
+    status: external_exports3.enum(["pending", "promoted", "rejected", "dropped", "all"]).optional().describe("extractions: filter by extraction status (default: pending)"),
     limit: external_exports3.number().optional()
   }, async (input) => {
     const db2 = getDb();
@@ -32911,7 +33120,7 @@ ${raw}`;
     } else if (input.type === "notes") {
       result = db2.prepare(`SELECT * FROM notes WHERE 1=1 ORDER BY created_at DESC LIMIT ?`).all(input.limit ?? 50);
     } else if (input.type === "extractions") {
-      result = listExtractions({ status: input.filter ?? "pending", limit: input.limit });
+      result = listExtractions({ status: input.status ?? "pending", limit: input.limit });
     }
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });

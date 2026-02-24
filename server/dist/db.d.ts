@@ -2,6 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 export type { SQLInputValue } from 'node:sqlite';
 export declare function getDb(projectDir?: string): InstanceType<typeof DatabaseSync>;
 export declare function closeDb(): void;
+export declare function isVecAvailable(): boolean;
+export declare function getVecStatus(): {
+    available: boolean;
+    extensionPath: string | null;
+    error: string | null;
+};
 export declare function now(): string;
 export declare function parseJson<T>(value: unknown): T | null;
 export declare function toJson(value: unknown): string | null;

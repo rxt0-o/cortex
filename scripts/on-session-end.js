@@ -283,12 +283,23 @@ function extractFromTranscript(db, sessionId, transcriptPath) {
       const sourceContext = chunk.slice(0, 200);
 
       try {
-        insertStmt.run(sessionId, pattern.type, chunk.slice(0, 300), confidence, status, sourceContext);
+        const insertResult = insertStmt.run(sessionId, pattern.type, chunk.slice(0, 300), confidence, status, sourceContext);
+        const extractionId = Number(insertResult.lastInsertRowid);
         extracted++;
 
         // Auto-promote high-confidence items
         if (status === 'promoted') {
-          autoPromote(db, sessionId, pattern.type, chunk.slice(0, 300));
+          const promoted = autoPromote(db, sessionId, pattern.type, chunk.slice(0, 300));
+          if (promoted) {
+            db.prepare(`
+              UPDATE auto_extractions
+              SET promoted_to_type = ?, promoted_to_id = ?
+              WHERE id = ?
+            `).run(promoted.type, promoted.id, extractionId);
+          } else {
+            // Promotion failed; keep item reviewable instead of leaving a broken "promoted" record.
+            db.prepare(`UPDATE auto_extractions SET status = 'pending' WHERE id = ?`).run(extractionId);
+          }
         }
       } catch {
         // Duplicate or constraint error — skip.
@@ -304,24 +315,28 @@ function autoPromote(db, sessionId, type, content) {
   try {
     if (type === 'error') {
       const sig = `auto-extract-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      db.prepare(
+      const result = db.prepare(
         `INSERT INTO errors (session_id, first_seen, last_seen, error_signature, error_message, severity)
          VALUES (?, ?, ?, ?, ?, 'medium')`
       ).run(sessionId, ts, ts, sig, content);
+      return { type: 'error', id: Number(result.lastInsertRowid) };
     } else if (type === 'decision') {
-      db.prepare(
+      const result = db.prepare(
         `INSERT INTO decisions (session_id, created_at, category, title, reasoning, confidence)
          VALUES (?, ?, 'auto-extracted', ?, '[auto-extracted]', 'low')`
       ).run(sessionId, ts, content);
+      return { type: 'decision', id: Number(result.lastInsertRowid) };
     } else if (type === 'learning' || type === 'convention') {
-      db.prepare(
+      const result = db.prepare(
         `INSERT INTO learnings (session_id, created_at, anti_pattern, correct_pattern, context, confidence)
          VALUES (?, ?, ?, '[auto-extracted]', 'auto-extracted from transcript', 0.4)`
       ).run(sessionId, ts, content);
+      return { type: 'learning', id: Number(result.lastInsertRowid) };
     }
   } catch {
     // Non-critical.
   }
+  return null;
 }
 
 main().catch((err) => {

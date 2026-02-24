@@ -2,11 +2,17 @@ import { DatabaseSync } from 'node:sqlite';
 export type { SQLInputValue } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { FTS_TABLES, FTS_TRIGGER_DROPS, FTS_TRIGGERS } from './shared/fts-schema.js';
 
 let db: InstanceType<typeof DatabaseSync> | null = null;
+let vecAvailable = false;
+let vecExtensionPath: string | null = null;
+let vecInitError: string | null = null;
+const require = createRequire(import.meta.url);
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -225,6 +231,15 @@ CREATE TABLE IF NOT EXISTS embeddings (
   UNIQUE(entity_type, entity_id)
 );
 
+CREATE TABLE IF NOT EXISTS embedding_meta (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(entity_type, entity_id)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -295,6 +310,7 @@ CREATE INDEX IF NOT EXISTS idx_errors_archived ON errors(archived_at);
 CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity ON embedding_meta(entity_type, entity_id);
 
 CREATE INDEX IF NOT EXISTS idx_wm_session_activation ON working_memory(session_id, activation_level DESC);
 CREATE INDEX IF NOT EXISTS idx_ae_session_status ON auto_extractions(session_id, status);
@@ -350,6 +366,16 @@ const COMPAT_MIGRATIONS: string[] = [
     entity_type TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     embedding BLOB NOT NULL,
+    model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(entity_type, entity_id)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS embedding_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
     model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(entity_type, entity_id)
@@ -424,6 +450,7 @@ const COMPAT_MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)`,
   `CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity ON embedding_meta(entity_type, entity_id)`,
 
   // Phase 4: Brain Foundation — neue Tabellen
   `CREATE TABLE IF NOT EXISTS working_memory (
@@ -515,7 +542,7 @@ export function getDb(projectDir?: string): InstanceType<typeof DatabaseSync> {
   if (db) return db;
 
   const dbPath = getDbPath(projectDir);
-  db = new DatabaseSync(dbPath);
+  db = new DatabaseSync(dbPath, { allowExtension: true });
 
   // Performance pragmas
   db.exec('PRAGMA journal_mode = WAL');
@@ -523,6 +550,7 @@ export function getDb(projectDir?: string): InstanceType<typeof DatabaseSync> {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
 
+  initVecExtension(db);
   initSchema(db);
   return db;
 }
@@ -539,6 +567,7 @@ function initSchema(database: InstanceType<typeof DatabaseSync>): void {
     database.exec(FTS_TABLES);
     database.exec(FTS_TRIGGER_DROPS);
     database.exec(FTS_TRIGGERS);
+    ensureVecSchema(database);
     ensureSchemaVersionRow(database);
     database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
     return;
@@ -564,6 +593,7 @@ function initSchema(database: InstanceType<typeof DatabaseSync>): void {
   // FTS Triggers: DROP + CREATE — kaputte Trigger werden ersetzt
   database.exec(FTS_TRIGGER_DROPS);
   database.exec(FTS_TRIGGERS);
+  ensureVecSchema(database);
 
   // Phase 4: Backfill — NULL-Werte auf Defaults setzen
   const backfillSql = [
@@ -588,6 +618,130 @@ function initSchema(database: InstanceType<typeof DatabaseSync>): void {
   database.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
 }
 
+function initVecExtension(database: InstanceType<typeof DatabaseSync>): void {
+  vecAvailable = false;
+  vecExtensionPath = null;
+  vecInitError = null;
+
+  if (process.env.CORTEX_VEC_DISABLE === '1') {
+    vecInitError = 'disabled by CORTEX_VEC_DISABLE=1';
+    return;
+  }
+
+  if (tryLoadVecFromPackage(database)) {
+    return;
+  }
+
+  const resolvedPath = resolveVecExtensionPath();
+  if (!resolvedPath) {
+    vecInitError = 'sqlite-vec not found (install npm package "sqlite-vec", or set CORTEX_VEC_DLL_PATH / server/native/vec0.dll)';
+    return;
+  }
+
+  try {
+    database.loadExtension(resolvedPath);
+    vecAvailable = true;
+    vecExtensionPath = resolvedPath;
+  } catch (error) {
+    vecInitError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function tryLoadVecFromPackage(database: InstanceType<typeof DatabaseSync>): boolean {
+  try {
+    const sqliteVec = require('sqlite-vec') as {
+      load?: (db: InstanceType<typeof DatabaseSync>) => void;
+      default?: { load?: (db: InstanceType<typeof DatabaseSync>) => void };
+    };
+    const loadFn = sqliteVec?.load ?? sqliteVec?.default?.load;
+    if (typeof loadFn !== 'function') {
+      return false;
+    }
+
+    loadFn(database);
+    vecAvailable = true;
+    vecExtensionPath = 'npm:sqlite-vec';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveVecExtensionPath(): string | null {
+  const envPath = process.env.CORTEX_VEC_DLL_PATH?.trim();
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath;
+  }
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const nativeDirs = [
+    path.resolve(moduleDir, '../native'),
+    path.resolve(moduleDir, '../../native'),
+  ];
+
+  const candidateNames = process.platform === 'win32'
+    ? ['vec0.dll']
+    : process.platform === 'darwin'
+      ? ['vec0.dylib', 'libvec0.dylib']
+      : ['vec0.so', 'libvec0.so'];
+
+  for (const dir of nativeDirs) {
+    for (const name of candidateNames) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function ensureVecSchema(database: InstanceType<typeof DatabaseSync>): void {
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(entity_type, entity_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_embedding_meta_entity
+      ON embedding_meta(entity_type, entity_id);
+    `);
+  } catch {
+    // Non-critical: legacy DB might still be migrating.
+  }
+
+  if (!vecAvailable) return;
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+        embedding float[384]
+      );
+    `);
+  } catch (error) {
+    vecAvailable = false;
+    vecInitError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+
+  try {
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS embedding_meta_ad
+      AFTER DELETE ON embedding_meta
+      BEGIN
+        DELETE FROM vec_embeddings WHERE rowid = old.id;
+      END;
+    `);
+  } catch {
+    // Optional cleanup trigger.
+  }
+}
+
 function hasTable(database: InstanceType<typeof DatabaseSync>, name: string): boolean {
   const row = database.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
@@ -607,6 +761,21 @@ export function closeDb(): void {
     db.close();
     db = null;
   }
+  vecAvailable = false;
+  vecExtensionPath = null;
+  vecInitError = null;
+}
+
+export function isVecAvailable(): boolean {
+  return vecAvailable;
+}
+
+export function getVecStatus(): { available: boolean; extensionPath: string | null; error: string | null } {
+  return {
+    available: vecAvailable,
+    extensionPath: vecExtensionPath,
+    error: vecInitError,
+  };
 }
 
 export function now(): string {

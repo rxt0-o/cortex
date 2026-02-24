@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "sqlite-vec": "0.1.7-alpha.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

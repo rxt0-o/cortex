@@ -314,6 +314,8 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
       auto_block_only: z.boolean().optional().describe('learnings: only auto-blocking rules'),
       filter: z.enum(['all', 'actionable']).optional()
         .describe('todos: "actionable" shows only unblocked unresolved items'),
+      status: z.enum(['pending', 'promoted', 'rejected', 'dropped', 'all']).optional()
+        .describe('extractions: filter by extraction status (default: pending)'),
       limit: z.number().optional(),
     },
     async (input) => {
@@ -331,7 +333,7 @@ Possible duplicate of #${duplicate.id}: \"${duplicate.anti_pattern}\"`;
       } else if (input.type === 'notes') {
         result = db.prepare(`SELECT * FROM notes WHERE 1=1 ORDER BY created_at DESC LIMIT ?`).all(input.limit ?? 50);
       } else if (input.type === 'extractions') {
-        result = extractions.listExtractions({ status: input.filter ?? 'pending', limit: input.limit });
+        result = extractions.listExtractions({ status: input.status ?? 'pending', limit: input.limit });
       }
 
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

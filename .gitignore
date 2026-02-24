@@ -28,3 +28,6 @@ dist/
 !server/dist/
 
 package-lock.json
+
+# sqlite-vec native extension (local install)
+server/native/*.dll
